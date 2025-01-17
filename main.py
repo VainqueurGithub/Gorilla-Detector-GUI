@@ -2,6 +2,7 @@ import enum
 import statistics
 import tkinter as tk
 from tkinter import ttk
+from turtle import bgcolor
 from unittest import TestResult
 from PIL import Image, ImageTk
 from tkinter import messagebox, filedialog
@@ -39,7 +40,7 @@ os.environ["KMP_DUPLICATE_LIB_OK"]="TRUE"
 hop_length = 512 # number of samples per time-step in spectrogram
 n_mels = 128 # number of bins in spectrogram. Height of image
 time_steps = 384 # number of time-steps. Width of image
-spectrogram_width = 230  # Width of the spectrogram image
+spectrogram_width = 259  # Width of the spectrogram image
 spectrogram_height = 128  # Height of the spectrogram image
 audio_duration = 6.0  # Total audio duration in seconds
 max_frequency = 5000.0  # Maximum frequency in Hz
@@ -100,6 +101,17 @@ def proceed_action():
     else:
         messagebox.showerror("Error", "You must select an input folder before proceeding!")
 
+
+def clean_space_control():
+    # Check if a folder is selected
+    if (hasattr(folder_input_path_label, "selected_folder") and folder_input_path_label.selected_folder) and (hasattr(folder_output_path_label, "selected_folder") and folder_output_path_label.selected_folder):
+        return folder_output_path_label.selected_folder,folder_input_path_label.selected_folder
+    elif hasattr(folder_input_path_label, "selected_folder") and folder_input_path_label.selected_folder:
+        return folder_input_path_label.selected_folder      
+    elif hasattr(folder_output_path_label, "selected_folder") and folder_output_path_label.selected_folder:
+        return folder_output_path_label.selected_folder
+    else:
+        messagebox.showerror("Error", "You must select an folder before proceeding!")
 
 def predict_class(filename,conf, iou, show=False, imgsz=640,save=False,name='yolov8m'):
     model = YOLO('model/runs/detect/yolov8m_custom3/weights/best.pt')
@@ -235,7 +247,12 @@ def task_progress_bar_detection(conf,iou):
 
     for i, file in enumerate(files, start=1):
         filename = os.path.basename(file)
-        chunk_spectrogram(filename,input_path,path_audio_chunks,directory_chunk,conf,iou,output_path)
+        #computer file duration in second
+        audio = AudioSegment.from_file(file)
+        duration_ms = len(audio) # Get the duration in milliseconds
+        duration_sec = duration_ms / 1000.0 # Convert milliseconds to seconds
+
+        chunk_spectrogram(filename,input_path,path_audio_chunks,directory_chunk,conf,iou,output_path,duration_sec)
         time.sleep(0.3 + (0.3 * (i / max_value)))
         progress["value"] = i
         label.config(text=f"Processing {i}/{len(files)}")
@@ -247,7 +264,7 @@ def task_progress_bar_detection(conf,iou):
     run_button.config(state="normal")
 
 
-def detection_out_put(chunk_array,conf, iou, output_path):
+def detection_out_put(chunk_array,conf, iou, output_path,duration_sec):
     Selection=1
     View = 'Spectrogram 1'
     Channel = 1
@@ -264,27 +281,27 @@ def detection_out_put(chunk_array,conf, iou, output_path):
                     bbox = cl.xywhn
                     x, y, width, height = bbox[0].tolist()  # Convert to individual scalar values
                     # Denormalize bounding box
-                    x_min = (x - width / 2) * 640
-                    x_max = (x + width / 2) * 640
-                    y_min = (y - height / 2) * 384
-                    y_max = (y + height / 2) * 384
+                    x_min = (x - width / 2) * 259
+                    x_max = (x + width / 2) * 259
+                    y_min = (y - height / 2) * 128
+                    y_max = (y + height / 2) * 128
                     hour_voc = random.randint(0, 23)
                     start_u = np.datetime64('2024-01-01').astype('M8[D]').astype('int64')
                     end_u = np.datetime64('2024-12-31').astype('M8[D]').astype('int64')
                     date_voc = np.datetime64(np.random.randint(start_u, end_u), 'D')
                     lat = random.uniform(514127, 566127)
                     long = random.uniform(9837988, 9859270)
-                    # Convert to time and frequency ranges
+                    # Convert bounding boxes coordinates to time and frequency ranges
                     if j==0:
-                        time_start = (x_min / 640) * audio_duration
-                        time_end = (x_max / 640) * audio_duration
-                        freq_start = (y_min / 384) * max_frequency
-                        freq_end = (y_max / 384) * max_frequency
+                        time_start = (x_min / 259) * audio_duration
+                        time_end = (x_max / 259) * audio_duration
+                        freq_start = (y_min / 128) * max_frequency
+                        freq_end = (y_max / 128) * max_frequency
                     else:
-                        time_start = time_elaspe+((x_min / 640) * audio_duration)
-                        time_end = time_elaspe+((x_max / 640) * audio_duration)
-                        freq_start = (y_min / 384) * max_frequency
-                        freq_end = (y_max / 384) * max_frequency
+                        time_start = time_elaspe+((x_min / 259) * audio_duration)
+                        time_end = time_elaspe+((x_max / 259) * audio_duration)
+                        freq_start = (y_min / 128) * max_frequency
+                        freq_end = (y_max / 128) * max_frequency
                         time_elaspe +=6
                     detector_table.loc[i] = [Selection, View, Channel,time_start,time_end,freq_start,freq_end,label,cl.conf[0].item(),hour_voc,date_voc,lat,long]
                     i+=1
@@ -292,11 +309,11 @@ def detection_out_put(chunk_array,conf, iou, output_path):
 
     filename_chunk_spect = os.path.basename(c)
     filename_chunk_spect = filename_chunk_spect.split(".wav")
-    output_file = output_path+'/'+filename_chunk_spect[0]+'.txt'
+    output_file = output_path+'/'+filename_chunk_spect[0]+'duration_'+str(duration_sec)+'.txt'
     detector_table.to_csv(output_file, sep="\t", index=False)
 
 
-def chunk_spectrogram(filename,input_path,path_audio_chunks,directory_chunk,conf,iou,output_path,hop_length=hop_length, n_mels=n_mels, time_steps=time_steps):
+def chunk_spectrogram(filename,input_path,path_audio_chunks,directory_chunk,conf,iou,output_path,duration_sec,hop_length=hop_length, n_mels=n_mels, time_steps=time_steps):
     if filename.endswith((".wav", ".WAV")):
         time.sleep(0.1)  # Simulate processing time
         out_array = []
@@ -317,7 +334,7 @@ def chunk_spectrogram(filename,input_path,path_audio_chunks,directory_chunk,conf
             else:
                 continue
         #Use the image (spectogram) for detection
-        detection_out_put(out_array,conf, iou, output_path)
+        detection_out_put(out_array,conf, iou, output_path, duration_sec)
 
 # CREATE MENU BUTTONS FUNCTIONS
 
@@ -326,20 +343,30 @@ def open_summary_result_window():
     # Create a new window (child window)
     summary_result_window = tk.Toplevel(root)
     summary_result_window.title("Detection results")
-    summary_result_window.geometry("700x350")
+    summary_result_window.geometry("760x350")
     #login button
 
     # Treeview table to display files
-    columns = ("Chunk","Detections","Size (bytes)", "Path")
+    columns = ("File","Detections","Size (bytes)", "duration (s)", "conf_mean", "conf_min", "conf_max", "conf_std")
     file_table = ttk.Treeview(summary_result_window, columns=columns, show="headings", height=15)
-    file_table.heading("Chunk", text="Chunk")
-    file_table.heading("Detections", text="Detections")
+    file_table.heading("File", text="File")
+    file_table.heading("Detections", text="Events")
     file_table.heading("Size (bytes)", text="Size (bytes)")
-    file_table.heading("Path", text="Path")
-    file_table.column("Chunk", anchor="e", width=400)
-    file_table.column("Detections", anchor="e", width=100)
-    file_table.column("Size (bytes)", anchor="e", width=100)
-    file_table.column("Path", anchor="e", width=100)
+    file_table.heading("duration (s)", text="Duration (s)")
+    file_table.heading("conf_mean", text="Score.Avg")
+    file_table.heading("conf_min", text="Score.Min")
+    file_table.heading("conf_max", text="Score.Max")
+    file_table.heading("conf_std", text="Score.Std")
+    #file_table.heading("Path", text="Path")
+    file_table.column("File", anchor="e", width=300)
+    file_table.column("Detections", anchor="e", width=50)
+    file_table.column("Size (bytes)", anchor="e", width=70)
+    file_table.column("duration (s)", anchor="e", width=70)
+    file_table.column("conf_mean", anchor="e", width=60)
+    file_table.column("conf_min", anchor="e", width=60)
+    file_table.column("conf_max", anchor="e", width=60)
+    file_table.column("conf_std", anchor="e", width=50)
+    #file_table.column("Path", anchor="e", width=100)
     file_table.pack(pady=10, fill="both", expand=True)
 
     # Scrollbar for the table
@@ -553,12 +580,92 @@ def populate_summary_result_table(folder_path):
             file_path = os.path.join(folder_path, file_name)
             with open(file_path, 'r') as fp:
                 lines = len(fp.readlines())
+            df = pd.read_csv(file_path, sep="\t")
+            conf_mean = round(df['conf'].mean(),2)
+            conf_min = round(df['conf'].min(),2)
+            conf_max = round(df['conf'].max(),2)
+            conf_std = round(np.std(df['conf'], ddof=1),2)  # ddof=1 for sample standard
+            file_duration = file_name.split("duration_")
+            file_duration = file_duration[1].split(".txt")
             file_detection = lines-1
             file_size = os.path.getsize(file_path)
-            file_Path = folder_path
-            file_table.insert("", "end", values=(file_name, file_detection, file_size, file_Path))
+            file_duration = file_duration[0]
+            #file_Path = folder_path
+            file_table.insert("", "end", values=(file_name, file_detection, file_size, file_duration, conf_mean, conf_min, conf_max, conf_std))
     except Exception as e:
         print(e)
+
+def clean_space():
+    """Display a warning message when the button is clicked."""
+    response = messagebox.askquestion("Warning", "Do you want to delete the input data and its results ?")
+
+    if response == 'yes':
+        output_path,input_path = clean_space_control()
+        path_audio_chunks = input_path+'/audio_chunks/'
+        path_audio_chunk_spect = path_audio_chunks+'/chunk_spect/'
+        
+        """Delete all files in the selected folder."""
+    if not output_path and not input_path:
+        messagebox.showwarning("No Folder Selected", "Please select either input folder or output folder.")
+        return
+
+    try:
+        if output_path and input_path:
+            file_count = 0
+            for filename in os.listdir(output_path):
+                file_path = os.path.join(output_path, filename)
+                if os.path.isfile(file_path):  # Only delete files, not subfolders
+                    os.remove(file_path)
+                    file_count += 1
+            for filename in os.listdir(input_path):
+                file_path = os.path.join(input_path, filename)
+                if os.path.isfile(file_path):  # Only delete files, not subfolders
+                    os.remove(file_path)
+                    file_count += 1
+
+            for filename in os.listdir(path_audio_chunks):
+                file_path = os.path.join(path_audio_chunks, filename)
+                if os.path.isfile(file_path):  # Only delete files, not subfolders
+                    os.remove(file_path)
+                    file_count += 1
+
+            for filename in os.listdir(path_audio_chunk_spect):
+                file_path = os.path.join(path_audio_chunk_spect, filename)
+                if os.path.isfile(file_path):  # Only delete files, not subfolders
+                    os.remove(file_path)
+                    file_count += 1
+            messagebox.showinfo("Success", f"Deleted {file_count} files from the folder.")
+        elif input_path:
+            file_count = 0
+            for filename in os.listdir(input_path):
+                file_path = os.path.join(input_path, filename)
+                if os.path.isfile(file_path):  # Only delete files, not subfolders
+                    os.remove(file_path)
+                    file_count += 1
+            for filename in os.listdir(path_audio_chunks):
+                file_path = os.path.join(path_audio_chunks, filename)
+                if os.path.isfile(file_path):  # Only delete files, not subfolders
+                    os.remove(file_path)
+                    file_count += 1
+
+            for filename in os.listdir(path_audio_chunk_spect):
+                file_path = os.path.join(path_audio_chunk_spect, filename)
+                if os.path.isfile(file_path):  # Only delete files, not subfolders
+                    os.remove(file_path)
+                    file_count += 1
+            messagebox.showinfo("Success", f"Deleted {file_count} files from the folder.")
+
+        elif output_path:
+            file_count = 0
+            for filename in os.listdir(output_path):
+                file_path = os.path.join(output_path, filename)
+                if os.path.isfile(file_path):  # Only delete files, not subfolders
+                    os.remove(file_path)
+                    file_count += 1
+            messagebox.showinfo("Success", f"Deleted {file_count} files from the folder.")
+           
+    except Exception as e:
+        messagebox.showerror("Error", f"An error occurred: {e}")
 
 # root window
 root = tk.Tk()
@@ -648,9 +755,13 @@ iou_entry.insert(0, 10)
 
 
 
-#login button
+#Run button
 run_button = ttk.Button(root, text="Run detector",width=15, command=submit_form)
 run_button.place(relx=0.06, rely=0.5)
+
+#Clean button
+clean_space_button = ttk.Button(root, text="Clean space",width=15, command=clean_space)
+clean_space_button.place(relx=0.2, rely=0.5)
 
 # Separator object
 separator = ttk.Separator(root, orient='horizontal')
@@ -684,6 +795,7 @@ logo2_label.place(relx=0.85, rely=0.7)  # Adjust padding as needed
 # Add the image to a label
 conceptor_label = tk.Label(root, text='Vainqueur BULAMBO')
 conceptor_label.place(relx=0.02, rely=0.9)  # Adjust padding as needed
+
 
 root.mainloop()
 
