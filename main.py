@@ -1,5 +1,7 @@
 import enum
+import subprocess
 import statistics
+import importlib
 import tkinter as tk
 from tkinter import ttk
 from turtle import bgcolor
@@ -113,9 +115,10 @@ def clean_space_control():
     else:
         messagebox.showerror("Error", "You must select an folder before proceeding!")
 
-def predict_class(filename,conf, iou, show=False, imgsz=640,save=False,name='yolov8m'):
-    model = YOLO('model/runs/detect/yolov8m_custom3/weights/best.pt')
-
+def predict_class(filename,conf, iou, show=False, imgsz=640,save=True,name='yolov8m'):
+    
+    model = YOLO('model/runs/detect/yolov8l_custom/weights/best.pt')
+    
     #Predicting
     result=model.predict(
         source=filename,show=show,imgsz=imgsz,save=save,name=name,conf=conf,iou=iou)
@@ -157,7 +160,7 @@ def scale_minmax(X, min=0.0, max=1.0):
     X_scaled = X_std * (max - min) + min
     return X_scaled
 
-def spectrogram_image(y, sr, out, hop_length, n_mels, fmax=3000):
+def spectrogram_image(y, sr, out, hop_length, n_mels, fmax=5000):
     """Generate and save a spectrogram image."""
     # Generate log-mel spectrogram
     mels = librosa.feature.melspectrogram(
@@ -370,10 +373,21 @@ def open_summary_result_window():
     file_table.pack(pady=10, fill="both", expand=True)
 
     # Scrollbar for the table
-    scrollbar = ttk.Scrollbar(summary_result_window, orient="vertical", command=file_table.yview)
-    file_table.configure(yscroll=scrollbar.set)
-    scrollbar.pack(side="right", fill="y")
+    #scrollbar = ttk.Scrollbar(summary_result_window, orient="vertical", command=file_table.yview)
+    #file_table.configure(yscroll=scrollbar.set)
+    #scrollbar.pack(side="right", fill="y")
+    # Bind the treeview selection event
+    #file_table.bind("<<TreeviewSelect>>", on_record_select(file_table))
     return file_table
+
+def on_record_select(file_table):
+    """Display the selected record."""
+    selected_item = file_table.focus()  # Get the selected item (row ID)
+    if selected_item:
+        record = file_table.item(selected_item)['values']  # Get the values of the selected row
+        #record_label.config(text=f"Selected Record:\nIndex: {record[0]}\nContent: {record[1]}")
+        print("Bonjour")
+    print("Bonsoir")
 
 def marging_range_form():
     # Create a new window (child window)
@@ -564,8 +578,23 @@ def select_output_folder():
     if folder_path:
         return folder_path
 def populate_table():
-    folder_path = select_output_folder()
-    populate_summary_result_table(folder_path)
+    try:
+       # Import the script where the function is defined
+        script_name = "detection"  # Name of the Python file without the .py extension
+        module = importlib.import_module(script_name)
+        
+        # Call the function by its name
+        function_name = "open_table_window"  # Name of the function to call
+        func = getattr(module, function_name)  # Get the function reference
+        func()  # Call the function
+    except AttributeError:
+        print(f"Error: Function '{function_name}' not found in '{script_name}.py'.")
+    except ModuleNotFoundError:
+        print(f"Error: Script '{script_name}.py' not found.")
+    except Exception as e:
+        print(f"An error occurred: {e}")
+    #folder_path = select_output_folder()
+    #populate_summary_result_table(folder_path)
 
 def populate_summary_result_table(folder_path):
     """Populate the Treeview table with files from the selected folder."""
