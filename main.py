@@ -1,6 +1,8 @@
 import enum
 import subprocess
 import statistics
+import csv
+from pathlib import Path
 import importlib
 import tkinter as tk
 from tkinter import ttk
@@ -18,6 +20,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import numpy as np
 import maad
+from datetime import datetime
 from maad import sound, features, rois
 import librosa.display
 import librosa
@@ -35,6 +38,9 @@ from matplotlib.figure import Figure
 from shapely.geometry import Point
 from pyproj import CRS, Transformer
 import seaborn as sns
+from sklearn.cluster import KMeans, DBSCAN
+from scipy.cluster.hierarchy import linkage, dendrogram, fcluster
+from sklearn.preprocessing import OneHotEncoder, LabelEncoder
 sns.set_theme(style="darkgrid")
 os.environ["KMP_DUPLICATE_LIB_OK"]="TRUE"
 #save
@@ -42,10 +48,11 @@ os.environ["KMP_DUPLICATE_LIB_OK"]="TRUE"
 hop_length = 512 # number of samples per time-step in spectrogram
 n_mels = 128 # number of bins in spectrogram. Height of image
 time_steps = 384 # number of time-steps. Width of image
-spectrogram_width = 259  # Width of the spectrogram image
-spectrogram_height = 128  # Height of the spectrogram image
 audio_duration = 6.0  # Total audio duration in seconds
-max_frequency = 5000.0  # Maximum frequency in Hz
+max_freq = 8000.0  # Maximum frequency in Hz
+image_width = 640  # Spectrogram width (time axis)
+image_height = 320  # Spectrogram height (frequency axis)
+min_freq =0
 Selection=1
 View = 'Spectrogram 1'
 Channel = 1
@@ -273,7 +280,7 @@ def detection_out_put(chunk_array,conf, iou, output_path,duration_sec):
     Channel = 1
     label='Gorilla'
     i=0
-    detector_table = pd.DataFrame(columns=['Selection', 'View', 'Channel', 'Begin Time (s)', 'End Time (s)', 'Low Freq (Hz)', 'High Freq (Hz)', 'label', 'conf','hour_voc','date_voc','lat','long'])
+    detector_table = pd.DataFrame(columns=['Selection', 'View', 'Channel', 'Begin Time (s)', 'End Time (s)', 'Low Freq (Hz)', 'High Freq (Hz)', 'label', 'conf', 'chrunk'])
     #filename_chunk_spect
     time_elaspe = 6
     for j,c in enumerate(chunk_array):
@@ -282,37 +289,32 @@ def detection_out_put(chunk_array,conf, iou, output_path,duration_sec):
             for r in result:
                 for cl in r.boxes:
                     bbox = cl.xywhn
-                    x, y, width, height = bbox[0].tolist()  # Convert to individual scalar values
+                    x_center, y_center, width, height  = bbox[0].tolist()  # Convert to individual scalar values
                     # Denormalize bounding box
-                    x_min = (x - width / 2) * 259
-                    x_max = (x + width / 2) * 259
-                    y_min = (y - height / 2) * 128
-                    y_max = (y + height / 2) * 128
-                    hour_voc = random.randint(0, 23)
-                    start_u = np.datetime64('2024-01-01').astype('M8[D]').astype('int64')
-                    end_u = np.datetime64('2024-12-31').astype('M8[D]').astype('int64')
-                    date_voc = np.datetime64(np.random.randint(start_u, end_u), 'D')
-                    lat = random.uniform(514127, 566127)
-                    long = random.uniform(9837988, 9859270)
-                    # Convert bounding boxes coordinates to time and frequency ranges
+                    x_min = (x_center - width / 2) * image_width
+                    x_max = (x_center + width / 2) * image_width
+                    y_min = (y_center - height / 2) * image_height
+                    y_max = (y_center + height / 2) * image_height
                     if j==0:
-                        time_start = (x_min / 259) * audio_duration
-                        time_end = (x_max / 259) * audio_duration
-                        freq_start = (y_min / 128) * max_frequency
-                        freq_end = (y_max / 128) * max_frequency
+                        time_start = (x_min / image_width) * audio_duration
+                        time_end = (x_max / image_width) * audio_duration
+                        freq_start = min_freq + (1 - y_max / image_height) * (max_freq - min_freq)
+                        freq_end = min_freq + (1 - y_min / image_height) * (max_freq - min_freq)
                     else:
-                        time_start = time_elaspe+((x_min / 259) * audio_duration)
-                        time_end = time_elaspe+((x_max / 259) * audio_duration)
-                        freq_start = (y_min / 128) * max_frequency
-                        freq_end = (y_max / 128) * max_frequency
+                        time_start = time_elaspe+((x_min / image_width) * audio_duration)
+                        time_end = time_elaspe+((x_max / image_width) * audio_duration)
+                        freq_start = min_freq + (1 - y_max / image_height) * (max_freq - min_freq)
+                        freq_end = min_freq + (y_min / image_height) * (max_freq - min_freq)
                         time_elaspe +=6
-                    detector_table.loc[i] = [Selection, View, Channel,time_start,time_end,freq_start,freq_end,label,cl.conf[0].item(),hour_voc,date_voc,lat,long]
+                    if freq_start < 0:
+                           freq_start = freq_start * (-1)
+                    detector_table.loc[i] = [Selection, View, Channel,time_start,time_end,freq_start,freq_end,label,cl.conf[0].item(),j+1]
                     i+=1
                     Selection+=1
 
     filename_chunk_spect = os.path.basename(c)
     filename_chunk_spect = filename_chunk_spect.split(".wav")
-    output_file = output_path+'/'+filename_chunk_spect[0]+'duration_'+str(duration_sec)+'.txt'
+    output_file = output_path+'/'+filename_chunk_spect[0]+'_duration_'+str(duration_sec)+'.txt'
     detector_table.to_csv(output_file, sep="\t", index=False)
 
 
@@ -341,53 +343,6 @@ def chunk_spectrogram(filename,input_path,path_audio_chunks,directory_chunk,conf
 
 # CREATE MENU BUTTONS FUNCTIONS
 
-# OUTPUT RESULT TEXT
-def open_summary_result_window():
-    # Create a new window (child window)
-    summary_result_window = tk.Toplevel(root)
-    summary_result_window.title("Detection results")
-    summary_result_window.geometry("760x350")
-    #login button
-
-    # Treeview table to display files
-    columns = ("File","Detections","Size (bytes)", "duration (s)", "conf_mean", "conf_min", "conf_max", "conf_std")
-    file_table = ttk.Treeview(summary_result_window, columns=columns, show="headings", height=15)
-    file_table.heading("File", text="File")
-    file_table.heading("Detections", text="Events")
-    file_table.heading("Size (bytes)", text="Size (bytes)")
-    file_table.heading("duration (s)", text="Duration (s)")
-    file_table.heading("conf_mean", text="Score.Avg")
-    file_table.heading("conf_min", text="Score.Min")
-    file_table.heading("conf_max", text="Score.Max")
-    file_table.heading("conf_std", text="Score.Std")
-    #file_table.heading("Path", text="Path")
-    file_table.column("File", anchor="e", width=300)
-    file_table.column("Detections", anchor="e", width=50)
-    file_table.column("Size (bytes)", anchor="e", width=70)
-    file_table.column("duration (s)", anchor="e", width=70)
-    file_table.column("conf_mean", anchor="e", width=60)
-    file_table.column("conf_min", anchor="e", width=60)
-    file_table.column("conf_max", anchor="e", width=60)
-    file_table.column("conf_std", anchor="e", width=50)
-    #file_table.column("Path", anchor="e", width=100)
-    file_table.pack(pady=10, fill="both", expand=True)
-
-    # Scrollbar for the table
-    #scrollbar = ttk.Scrollbar(summary_result_window, orient="vertical", command=file_table.yview)
-    #file_table.configure(yscroll=scrollbar.set)
-    #scrollbar.pack(side="right", fill="y")
-    # Bind the treeview selection event
-    #file_table.bind("<<TreeviewSelect>>", on_record_select(file_table))
-    return file_table
-
-def on_record_select(file_table):
-    """Display the selected record."""
-    selected_item = file_table.focus()  # Get the selected item (row ID)
-    if selected_item:
-        record = file_table.item(selected_item)['values']  # Get the values of the selected row
-        #record_label.config(text=f"Selected Record:\nIndex: {record[0]}\nContent: {record[1]}")
-        print("Bonjour")
-    print("Bonsoir")
 
 def marging_range_form():
     # Create a new window (child window)
@@ -454,23 +409,68 @@ def marging_range_form():
     detection_plot_button = ttk.Button(margin_form_window, text="Detection Plots",command=visualization_form)
     detection_plot_button.place(relx=0.35, rely=0.24, relheight=0.1, relwidth=0.3)
 
+    cluster_detection_button = ttk.Button(margin_form_window, text="Clustering Analysis",command=clustering_form)
+    cluster_detection_button.place(relx=0.67, rely=0.24, relheight=0.1, relwidth=0.3)
+
+def metadata_read_csv(source_metadata, file):
+
+    chemin_metadata = Path(source_metadata+'/'+file)
+
+    if chemin_metadata.exists():
+        # Open the file and read the first line to detect the delimiter
+        with open(source_metadata+'/'+file, "r") as csvfile:
+            # Read the file's content
+            sample = csvfile.readline()
+        
+            # Use Sniffer to detect the delimiter
+            dialect = csv.Sniffer().sniff(sample)
+            delimiter = dialect.delimiter
+    
+        # Read the data to pandas dataframe by assigning the correct delimiter
+
+        if delimiter==',':
+            data = pd.read_csv(source_metadata+'/'+file, sep = ',', encoding = 'latin1')
+        elif delimiter==';':
+            data = pd.read_csv(source_metadata+'/'+file, sep = ';', encoding = 'latin1')
+        return data
+    else:
+        messagebox.showerror("Error", "The meta data file is not  found in the output folder, or has been wrongly named. Make sure you have metadata_swifts.csv in output folder")
+
 def map_detection_form():
-    detection_frame = pd.DataFrame(columns=['Selection', 'View', 'Channel', 'Begin Time (s)', 'End Time (s)', 'Low Freq (Hz)', 'High Freq (Hz)', 'label', 'conf','hour_voc', 'date_voc','lat','long'])
-    gdf = pd.DataFrame(columns=['Selection', 'View', 'Channel', 'Begin Time (s)', 'End Time (s)', 'Low Freq (Hz)', 'High Freq (Hz)', 'label', 'conf','hour_voc', 'date_voc','lat','long'])
+    detection_frame = pd.DataFrame(columns=['Selection', 'View', 'Channel', 'Begin Time (s)', 'End Time (s)', 'Low Freq (Hz)', 'High Freq (Hz)', 'label', 'conf','hour_voc', 'date_voc','lat','long', 'swift', 'site', 'land_use', 'land_cover', 'vegetation'])
+    gdf = pd.DataFrame(columns=['Selection', 'View', 'Channel', 'Begin Time (s)', 'End Time (s)', 'Low Freq (Hz)', 'High Freq (Hz)', 'label', 'conf','hour_voc', 'date_voc','lat','long', 'swift', 'site', 'land_use', 'land_cover', 'vegetation'])
     folder_path = select_output_folder()
+
+    metadata = metadata_read_csv(folder_path, 'metadata_swifts.csv')
 
     try:
         for file_name in os.listdir(folder_path):
-            data_frame = pd.read_csv(folder_path+'/'+file_name, sep='\t')
-            detection_frame = pd.concat([detection_frame, data_frame], axis=0, ignore_index=True) # concatenating along rows
-            geometry = [Point(xy) for xy in zip(round(detection_frame['lat']),round(detection_frame['long']))]
-            gdf = gpd.GeoDataFrame(detection_frame, geometry=geometry) 
+            if file_name.endswith(".txt"):
+                data_frame = pd.read_csv(folder_path+'/'+file_name, sep='\t')
+
+                file_metadata = file_name.split('_duration_')
+                file_metadata = file_metadata[0].split('_')
+
+                swift = metadata.loc[metadata['swift']== file_metadata[0]]
+                data_frame['lat'] = swift.loc[swift.index[0],'lat']
+                data_frame['long'] = swift.loc[swift.index[0],'long']
+                data_frame['swift'] = swift.loc[swift.index[0],'swift']
+                data_frame['site'] = swift.loc[swift.index[0],'site']
+                data_frame['land_use'] = swift.loc[swift.index[0],'land_use']
+                data_frame['land_cover'] = swift.loc[swift.index[0],'land_cover']
+                data_frame['vegetation'] = swift.loc[swift.index[0],'vegetation']
+
+                detection_frame = pd.concat([detection_frame, data_frame], axis=0, ignore_index=True) # concatenating along rows
+                geometry = [Point(xy) for xy in zip(round(metadata['lat']),round(metadata['long']))]
+                gdf = gpd.GeoDataFrame(metadata, geometry=geometry) 
     except Exception as e:
         print(e) 
-
+    
     current_directory = os.getcwd()
     shape_directory = current_directory+'/plots/map'
-    
+    counts_df = detection_frame['swift'].value_counts().reset_index()
+    counts_df.columns = ['swift', 'counts']
+    counts_df
     for file in os.listdir(shape_directory):
         # check the files which are end with specific extension
 	    if file.endswith(".shp"):
@@ -479,40 +479,194 @@ def map_detection_form():
                   data.plot(color="lightgrey", edgecolor="black", alpha=0.7)
                   plt.title("Detection distribution Map.")
                   plt.show()
-              gdf.plot(ax = data.plot(color="lightgrey", edgecolor="black", alpha=0.7), marker='o', color='red', markersize=10)
+
+              gdf['events'] = metadata['swift'].map(counts_df.set_index('swift')['counts'])
+              gdf.plot(ax = data.plot(color="lightgrey", edgecolor="black", alpha=0.7), markersize=gdf['events'] * 5, alpha=0.6, color='red', edgecolor='black')
+
+              for x,y, label in zip(gdf.geometry.x, gdf.geometry.y, gdf['swift']):
+                plt.text(x,y, label, fontsize=12, ha='right', va='bottom', color='blue')
               plt.title("Detection distribution Map.")
               plt.show()
               
 
 def visualization_form():
-    global middleFrame
-    detection_frame = pd.DataFrame(columns=['Selection', 'View', 'Channel', 'Begin Time (s)', 'End Time (s)', 'Low Freq (Hz)', 'High Freq (Hz)', 'label', 'conf','hour_voc', 'date_voc','lat','long'])
+    detection_frame = pd.DataFrame(columns=['Selection', 'View', 'Channel', 'Begin Time (s)', 'End Time (s)', 'Low Freq (Hz)', 'High Freq (Hz)', 'label', 'conf','hour_voc', 'date_voc','lat','long', 'swift', 'site', 'land_use', 'land_cover', 'vegetation'])
     folder_path = select_output_folder()
 
     try:
         for file_name in os.listdir(folder_path):
-            data_frame = pd.read_csv(folder_path+'/'+file_name, sep='\t')
-            detection_frame = pd.concat([detection_frame, data_frame], axis=0, ignore_index=True) # concatenating along rows
+            if file_name.endswith(".txt"):
+
+                data_frame = pd.read_csv(folder_path+'/'+file_name, sep='\t')
+                file_name = file_name.split('_duration_')
+                file_name = file_name[0].split('_')
+
+                parsed_date = datetime.strptime(file_name[1], "%Y%m%d").date()
+                parsed_time = datetime.strptime(file_name[2], "%H%M%S").time()
+
+                data_frame['hour_voc'] = parsed_time
+                data_frame['date_voc'] = parsed_date
+
+                metadata = metadata_read_csv(folder_path, 'metadata_swifts.csv')
+                swift = metadata.loc[metadata['swift']== file_name[0]]
+                data_frame['lat'] = swift.loc[swift.index[0],'lat']
+                data_frame['long'] = swift.loc[swift.index[0],'long']
+                data_frame['swift'] = swift.loc[swift.index[0],'swift']
+                data_frame['site'] = swift.loc[swift.index[0],'site']
+                data_frame['land_use'] = swift.loc[swift.index[0],'land_use']
+                data_frame['land_cover'] = swift.loc[swift.index[0],'land_cover']
+                data_frame['vegetation'] = swift.loc[swift.index[0],'vegetation']
+                detection_frame = pd.concat([detection_frame, data_frame], axis=0, ignore_index=True) # concatenating along rows
     except Exception as e:
         print(e) 
-    
+
     detection_frame['date_voc'] = pd.to_datetime(detection_frame.date_voc)
-    detection_frame['Month'] = detection_frame['date_voc'].dt.month
-    detection_frame['Year'] = detection_frame['date_voc'].dt.year
-    detection_frame.set_index(pd.DatetimeIndex(detection_frame['date_voc']), inplace=True)
+    detection_frame['year'] = detection_frame['date_voc'].dt.year
+    detection_frame['month'] = detection_frame['date_voc'].dt.month
+    detection_frame['day'] = detection_frame['date_voc'].dt.day
+    detection_frame['day_name'] = detection_frame['date_voc'].dt.day_name()
+    
+    # Extract month name using apply
+    detection_frame['month_name'] = detection_frame['date_voc'].apply(lambda x: x.strftime('%B'))
+
+    #detection_frame['hour_voc'] = pd.to_datetime(detection_frame.hour_voc)
+    detection_frame['hour'] = detection_frame['hour_voc'].apply(lambda x: x.hour)
+    
+    #detection_frame.to_csv('output1.csv', index=False)
+    
+    data_plot = detection_frame.value_counts(['site', 'month_name', 'hour']).reset_index().rename(columns={0:'count'})
+    #detection_frame.set_index(pd.DatetimeIndex(detection_frame['date_voc']), inplace=True)
+
+    df_pivot = data_plot.pivot_table(index=['month_name', 'site'], columns='hour', values='count', aggfunc='sum').fillna(0).reset_index()
+
+    # Melt for Seaborn compatibility
+    df_melted = df_pivot.melt(id_vars=['month_name', 'site'], var_name='hour', value_name='count')
+
+    # Create FacetGrid for stacking within each 'Site' facet
+    g = sns.FacetGrid(df_melted, col="site", height=5, aspect=1, col_wrap=4)
+    g.map_dataframe(sns.barplot, x="month_name", y="count", hue="hour", dodge=False, palette='dark:#4c72b0')
+    g.map_dataframe(sns.barplot, x="month_name", y="count", hue="hour", dodge=False, palette='light:#4c72b0')
+
+    # Adjust labels and title
+    g.set_axis_labels("month_name", "count")
+    g.set_titles("{col_name}")
+    g.add_legend(title="hour")
+
+    sns.catplot(data=detection_frame, x="label", y="hour", hue="month_name", kind="swarm", col="site", aspect=.7,)
+    g = sns.catplot(data=detection_frame,x="label", y="month_name", row="site", kind="box", orient="h", sharex=False, margin_titles=True, height=1.5, aspect=4,)
+    
+    g.set(xlabel="Detections", ylabel="")
+    g.set_titles(row_template="{row_name}")
+    for ax in g.axes.flat:
+        ax.xaxis.set_major_formatter('')
 
     fig, axes = plt.subplots(2,2, figsize=(17,5))
-    lineplot = sns.lineplot(x="hour_voc", y="conf",hue="Month",data=detection_frame, ax=axes[0,0])
+    lineplot = sns.lineplot(x="hour", y="conf",hue="month_name",data=detection_frame, ax=axes[0,0])
     lineplot.axes.set_title('Detection confidence over time')
-    lineplot = sns.lineplot(x="hour_voc", y="High Freq (Hz)",hue="Month",data=detection_frame, ax=axes[0,1])
+    lineplot = sns.lineplot(x="hour", y="High Freq (Hz)",hue="month_name",data=detection_frame, ax=axes[0,1])
     lineplot.axes.set_title('Frequency Distribution over time')
 
 
-    lineplot = sns.histplot(data=detection_frame, x="hour_voc", ax=axes[1,0])
+    lineplot = sns.histplot(data=detection_frame, x="hour", ax=axes[1,0])
     lineplot.axes.set_title('Hourly detection')
-    lineplot = sns.histplot(data=detection_frame, x="Month", ax=axes[1,1])
+    lineplot = sns.histplot(data=detection_frame, x="month_name", ax=axes[1,1])
     lineplot.axes.set_title('Monthy Detection')
     plt.show()
+
+def clustering_form():
+    folder_path = select_output_folder()
+    detection_frame = pd.DataFrame(columns=['Begin Time (s)', 'End Time (s)', 'Low Freq (Hz)', 'High Freq (Hz)', 'label', 'conf','hour_voc', 'date_voc','land_use', 'land_cover', 'vegetation'])
+
+    try:
+        for file_name in os.listdir(folder_path):
+            if file_name.endswith(".txt"):
+
+                data_frame = pd.read_csv(folder_path+'/'+file_name, sep='\t')
+                file_name = file_name.split('_duration_')
+                file_name = file_name[0].split('_')
+
+                parsed_date = datetime.strptime(file_name[1], "%Y%m%d").date()
+                parsed_time = datetime.strptime(file_name[2], "%H%M%S").time()
+
+                data_frame['hour_voc'] = parsed_time
+                data_frame['date_voc'] = parsed_date
+
+                metadata = metadata_read_csv(folder_path, 'metadata_swifts.csv')
+                swift = metadata.loc[metadata['swift']== file_name[0]]
+                data_frame['land_use'] = swift.loc[swift.index[0],'land_use']
+                data_frame['land_cover'] = swift.loc[swift.index[0],'land_cover']
+                data_frame['vegetation'] = swift.loc[swift.index[0],'vegetation']
+                detection_frame = pd.concat([detection_frame, data_frame], axis=0, ignore_index=True) # concatenating along rows
+    except Exception as e:
+        print(e)
+
+    detection_frame['date_voc'] = pd.to_datetime(detection_frame.date_voc)
+    detection_frame['month'] = detection_frame['date_voc'].dt.month
+    detection_frame['day'] = detection_frame['date_voc'].dt.day
+    detection_frame['day_name'] = detection_frame['date_voc'].dt.day_name()
+    
+    # Extract month name using apply
+    detection_frame['month_name'] = detection_frame['date_voc'].apply(lambda x: x.strftime('%B'))
+
+    #detection_frame['hour_voc'] = pd.to_datetime(detection_frame.hour_voc)
+    detection_frame['hour'] = detection_frame['hour_voc'].apply(lambda x: x.hour)
+
+    # Label Encode 'environment'
+    label_encoder = LabelEncoder()
+    #detection_frame["label_encoded"] = label_encoder.fit_transform(detection_frame["label"])
+    detection_frame["land_use_encoded"] = label_encoder.fit_transform(detection_frame["land_use"])
+    detection_frame["land_cover_encoded"] = label_encoder.fit_transform(detection_frame["land_cover"])
+    detection_frame["vegetation_encoded"] = label_encoder.fit_transform(detection_frame["vegetation"])
+    # Combine numerical and encoded categorical data
+   # data_final = pd.concat([detection_frame.drop(["vocalization_type", "environment"], axis=1), encoded_df], axis=1)
+
+    # Convert to NumPy matrix
+    data_final = detection_frame[['Begin Time (s)', 'End Time (s)', 'Low Freq (Hz)', 'High Freq (Hz)', 'conf','land_use_encoded', 'land_cover_encoded', 'vegetation_encoded', 'month','hour','day']]
+
+    # Apply K-Means Clustering
+    kmeans = KMeans(n_clusters=2, random_state=42)
+    data_final['cluster'] = kmeans.fit_predict(data_final)
+
+    # Append cluster labels
+    '''feature_matrix_kmeans = np.column_stack((matrix, clusters_kmeans))
+
+    # Apply DBSCAN
+    dbscan = DBSCAN(eps=1.0, min_samples=2)  # Tune `eps` for grouping
+    clusters_dbscan = dbscan.fit_predict(matrix)
+
+    # Append cluster labels
+    feature_matrix_dbscan = np.column_stack((matrix, clusters_dbscan))
+
+    # Apply Hierarchical Clustering
+    Z = linkage(matrix, method='ward')
+    clusters_hierarchical = fcluster(Z, t=2, criterion='maxclust')
+
+    # Append cluster labels
+    feature_matrix_hierarchical = np.column_stack((matrix, clusters_hierarchical))
+
+    plt.figure(figsize=(8, 6))
+    sns.scatterplot(x=matrix[:, 0], y=matrix[:, 3], hue=clusters_kmeans, palette="viridis")
+    plt.xlabel("Start Time (s)")
+    plt.ylabel("Frequency (Hz)")
+    plt.title("Clustered Gorilla Vocalizations (K-Means)")
+    plt.show()'''
+
+    # Scatter Plot with Cluster Labels
+    plt.figure(figsize=(8, 5))
+
+    # Plot each data point
+    for i in range(len(data_final)):
+         plt.scatter(data_final["Begin Time (s)"][i], data_final["High Freq (Hz)"][i], c=f"C{data_final['cluster'][i]}", label=f"Cluster {data_final['cluster'][i]}" if i == 0 else "", edgecolors="k")
+         plt.text(data_final["End Time (s)"][i], data_final["High Freq (Hz)"][i], detection_frame["vegetation"][i], fontsize=10, ha='right', color="black")
+
+    # Label Axes
+    plt.xlabel("End Time (s)")
+    plt.ylabel("High Frequency (Hz)")
+    plt.title("Vocalization Clusters with Labels")
+    plt.grid(True)
+    plt.show()
+
+
 def submit_mergin_form(event,range1_start_entry,range1_end_entry,range2_start_entry,range2_end_entry,range3_start_entry,range3_end_entry):
     range1_start_entry = range1_start_entry.get()
     range1_end_entry = range1_end_entry.get()
@@ -593,37 +747,7 @@ def populate_table():
         print(f"Error: Script '{script_name}.py' not found.")
     except Exception as e:
         print(f"An error occurred: {e}")
-    #folder_path = select_output_folder()
-    #populate_summary_result_table(folder_path)
-
-def populate_summary_result_table(folder_path):
-    """Populate the Treeview table with files from the selected folder."""
-    # Clear existing data
-    file_table = open_summary_result_window()
-    for item in file_table.get_children():
-        file_table.delete(item)
-    
-    # List files in the folder
-    try:
-        for file_name in os.listdir(folder_path):
-            file_path = os.path.join(folder_path, file_name)
-            with open(file_path, 'r') as fp:
-                lines = len(fp.readlines())
-            df = pd.read_csv(file_path, sep="\t")
-            conf_mean = round(df['conf'].mean(),2)
-            conf_min = round(df['conf'].min(),2)
-            conf_max = round(df['conf'].max(),2)
-            conf_std = round(np.std(df['conf'], ddof=1),2)  # ddof=1 for sample standard
-            file_duration = file_name.split("duration_")
-            file_duration = file_duration[1].split(".txt")
-            file_detection = lines-1
-            file_size = os.path.getsize(file_path)
-            file_duration = file_duration[0]
-            #file_Path = folder_path
-            file_table.insert("", "end", values=(file_name, file_detection, file_size, file_duration, conf_mean, conf_min, conf_max, conf_std))
-    except Exception as e:
-        print(e)
-
+   
 def clean_space():
     """Display a warning message when the button is clicked."""
     response = messagebox.askquestion("Warning", "Do you want to delete the input data and its results ?")
@@ -700,7 +824,7 @@ def clean_space():
 root = tk.Tk()
 root.geometry("800x520")
 root.title('Gorilla Detector')
-root.resizable(0, 0)
+#root.resizable(0, 0)
 
 # configure the grid
 root.columnconfigure(0, weight=1)

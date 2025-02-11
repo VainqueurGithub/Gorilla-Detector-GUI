@@ -2,12 +2,15 @@ import tkinter as tk
 import pandas as pd
 import numpy as np
 import os
+#import simpleaudio as sa
 import librosa
-from scipy.io import wavfile
-import simpleaudio as sa
 from tkinter import ttk, filedialog, messagebox
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import matplotlib.pyplot as plt
+import numpy as np
+from scipy.io import wavfile
+from scipy.signal import butter, filtfilt
+import threading
 
 def open_table_window():
     """Open a new window to populate and interact with the table."""
@@ -19,21 +22,23 @@ def open_table_window():
             # List files in the folder
             try:
                 for file_name in os.listdir(folder_path):
-                    file_path = os.path.join(folder_path, file_name)
-                    with open(file_path, 'r') as fp:
-                        lines = len(fp.readlines())
-                    df = pd.read_csv(file_path, sep="\t")
-                    conf_mean = round(df['conf'].mean(),2)
-                    conf_min = round(df['conf'].min(),2)
-                    conf_max = round(df['conf'].max(),2)
-                    conf_std = round(np.std(df['conf'], ddof=1),2)  # ddof=1 for sample standard
-                    file_duration = file_name.split("duration_")
-                    file_duration = file_duration[1].split(".txt")
-                    file_detection = lines-1
-                    file_size = os.path.getsize(file_path)
-                    file_duration = file_duration[0]
-                    file_Path = folder_path
-                    tree.insert("", "end", values=(file_name, file_detection, file_size, file_duration, conf_mean, conf_min, conf_max, conf_std,file_Path))
+                    if file_name.endswith(".txt"):
+
+                        file_path = os.path.join(folder_path, file_name)
+                        with open(file_path, 'r') as fp:
+                            lines = len(fp.readlines())
+                        df = pd.read_csv(file_path, sep="\t")
+                        conf_mean = round(df['conf'].mean(),2)
+                        conf_min = round(df['conf'].min(),2)
+                        conf_max = round(df['conf'].max(),2)
+                        conf_std = round(np.std(df['conf'], ddof=1),2)  # ddof=1 for sample standard
+                        file_duration = file_name.split("_duration_")
+                        file_duration = file_duration[1].split(".txt")
+                        file_detection = lines-1
+                        file_size = os.path.getsize(file_path)
+                        file_duration = file_duration[0]
+                        file_Path = folder_path
+                        tree.insert("", "end", values=(file_name, file_detection, file_size, file_duration, conf_mean, conf_min, conf_max, conf_std,file_Path))
             except Exception as e:
                 print(e)
     
@@ -62,7 +67,7 @@ def open_table_window():
                     df = pd.read_csv(file_path, sep="\t")
                     df['path'] = record[8]
                     df['file'] = record[0]
-                    df = df[['Begin Time (s)', 'End Time (s)', 'Low Freq (Hz)', 'High Freq (Hz)', 'label', 'conf', 'path', 'file']]
+                    df = df[['Begin Time (s)', 'End Time (s)', 'Low Freq (Hz)', 'High Freq (Hz)', 'label', 'conf', 'path', 'file', 'chrunk']]
                     df = df.round(2)
                     # Set up columns dynamically
                     detection_tree["columns"] = list(df.columns)
@@ -79,21 +84,16 @@ def open_table_window():
                 except Exception as e:
                     messagebox.showerror("Error", f"Failed to load file: {e}")
     
-    def show_recording(path,file,time_start,time_end,freq_min,freq_max):
+    def show_recording(path,file,time_start,time_end,freq_min,freq_max,chrunk,n_mels=128, hop_length=512):
         # Create a new window (child window)
         spectogram_player = tk.Toplevel(table_window)
         spectogram_player.title("Wave File Spectrogram and Player")
         spectogram_player.geometry("850x400")
 
         spectogram_player.columnconfigure(0, weight=4)
-        #spectogram_player.columnconfigure(1, weight=1)
-        
-        audio_file = None
-        audio_data = None
-        sample_rate = None
-
+       
         path = path.split('output')[0]+'accoustic_data'
-        file_path = path+'/'+file.split('duration')[0]+'.wav'
+        file_path = path+'/'+file.split('_duration_')[0]+'.wav'
         if not file_path:
             return  # User canceled file dialog
 
@@ -102,46 +102,56 @@ def open_table_window():
         plot_frame.grid(column=0, row=1)
 
         try:
+            global y, canvas, ax, sr  # Use global variables for Tkinter updates
 
-            y, sr = librosa.load(file_path)
+            sr=None
+            y, sr = librosa.load(file_path, sr=sr)
             # Compute the mel spectrogram
             S = librosa.feature.melspectrogram(y=y, sr=sr, n_mels=128, fmax=8000)
 
             # Convert to dB scale for better visualization
             S_dB = librosa.power_to_db(S, ref=np.max)
 
-            # Define the time and frequency intervals
-            time_start = float(time_start)  # seconds
-            time_end = float(time_end)    # seconds
-            freq_min = float(freq_min)  # Hz
-            freq_max = float(freq_max)  # Hz
+            start_time = 6*(int(chrunk)-1)
+            end_time = 6*(int(chrunk))
+            
+            # Convert time to sample indices
+            start_sample = int(start_time * sr)
+            end_sample = int(end_time * sr)
 
-            # Compute time and frequency indices
-            time_indices = librosa.frames_to_time(np.arange(S.shape[1]), sr=sr)
-            freq_indices = librosa.mel_frequencies(n_mels=128, fmin=0, fmax=8000)
+            # Extract segment of interest
+            y_segment = y[start_sample:end_sample]
 
-            # Mask the spectrogram to the desired intervals
-            time_mask = (time_indices >= time_start) & (time_indices <= time_end)
-            freq_mask = (freq_indices >= freq_min) & (freq_indices <= freq_max)
+            # Create a Matplotlib Figure
+            fig, ax = plt.subplots(figsize=(6, 3))
+            canvas = FigureCanvasTkAgg(fig, master=spectogram_player)
+            canvas.get_tk_widget().grid(row=3, column=0, columnspan=2)
 
-            S_filtered = S_dB[freq_mask][:, time_mask]
+            # Generate mel spectrogram
+            spectrogram = librosa.feature.melspectrogram(y=y_segment, sr=sr, n_mels=n_mels, hop_length=hop_length)
+            spectrogram_db = librosa.power_to_db(spectrogram, ref=np.max)  # Convert to dB scale
+
+            # Clear previous plot
+            ax.clear()
+
+            # Plot spectrogram
+            librosa.display.specshow(spectrogram_db, sr=sr, hop_length=512, x_axis='time', y_axis='mel', ax=ax)
+            ax.set_title(f"Spectrogram from {start_time:.2f}s to {end_time:.2f}s")
+    
+            # Update plot in Tkinter
+            canvas.draw()
 
             # Plot the filtered spectrogram
             #fig, ax = plt.figure(figsize=(10, 6))
-            fig = plt.figure(figsize=(8, 3))
+            '''fig = plt.figure(figsize=(8, 3))
             ax = fig.add_subplot(111)
-            img = librosa.display.specshow(
-                  S_filtered,
-                  sr=sr,
-                  x_axis="time",
-                  y_axis="mel",
-                  fmin=freq_min,
-                  fmax=freq_max,
-                  ax=ax,
-                  cmap="viridis",
-                  hop_length=librosa.time_to_samples(1 / sr))
-               
-            ax.set_title(f"Filtered Mel Spectrogram ({freq_min}-{freq_max} Hz, {time_start}-{time_end} s)")
+
+            plt.figure(figsize=(10, 4))
+            img = librosa.display.specshow(spectrogram_db, sr=sr, hop_length=hop_length, x_axis='time', y_axis='mel')
+            plt.colorbar(format='%+2.0f dB')
+            plt.title("Spectrogram")
+            plt.xlabel("Time (s)")
+            plt.ylabel("Frequency (Mel)")
             fig.colorbar(img, ax=ax, format="%+2.0f dB")
 
             # Embed the plot in Tkinter
@@ -149,10 +159,10 @@ def open_table_window():
             canvas_widget = canvas.get_tk_widget()
             canvas_widget.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
             canvas.draw()
-            #canvas.get_tk_widget().pack(expand=True, fill="both")
+            #canvas.get_tk_widget().pack(expand=True, fill="both")'''
 
             # Enable the play button
-            play_button = ttk.Button(spectogram_player, text="Play Audio", command=play_audio(audio_file,audio_data,sample_rate))
+            play_button = ttk.Button(spectogram_player, text="Play Audio")
             play_button.place(relx=0.88, rely=0.2)
 
             # Enable the play button
@@ -165,29 +175,67 @@ def open_table_window():
             
         except Exception as e:
             messagebox.showerror("Error", f"Could not load file:\n{e}")
+    
+    def bandpass_filter(data, lowcut, highcut, samplerate, order=5):
+        """Apply a bandpass filter to the audio data."""
+        nyquist = 0.5 * samplerate
+        low = lowcut / nyquist
+        high = highcut / nyquist
+        b, a = butter(order, [low, high], btype='band')
+        y = filtfilt(b, a, data)
+        return y
 
-    def play_audio(audio_file,audio_data,sample_rate):
-        print("OHHHHHHHHH")
-        """Play the loaded audio file."""
-        '''if audio_file:
+    def play_audio(path,file,start_time,end_time,low_freq,high_freq):
+        
+        path = path.split('output')[0]+'accoustic_data'
+        file_path = path+'/'+file.split('_duration_')[0]+'.wav'
+        '''if file_path:
+            
             try:
-                # Convert audio data to 16-bit PCM format
-                audio_data = (audio_data * (2**15 - 1) / np.max(np.abs(audio_data))).astype(np.int16)
+                audio_data, sample_rate = librosa.load(file_path)
+                # Handle stereo by taking one channel (left channel)
+                start_time = float(start_time)
+                end_time = float(end_time)
+                low_freq = float(low_freq)
+                high_freq = float(high_freq)
 
-                # Play audio using simpleaudio
-                play_obj = sa.play_buffer(audio_data, 1, 2, sample_rate)  # Mono, 2 bytes per sample
+                if len(audio_data.shape) >1:
+                    audio_data = audio_data[:, 0]
+                if low_freq ==0:
+                   low_freq = 1
+                if high_freq ==0:
+                   high_freq = 1
+                # Extract the desired time interval
+                start_sample = int(start_time * sample_rate)
+                end_sample = int(end_time * sample_rate)
+                segment = audio_data[start_sample:end_sample]
+
+                # Apply the bandpass filter
+                filtered_segment = bandpass_filter(segment, low_freq, high_freq, sample_rate)
+    
+                # Normalize the data to fit in the range of int16 for playback
+                filtered_segment = np.int16(filtered_segment / np.max(np.abs(filtered_segment)) * 32767)
+    
+                # Play the audio
+                play_obj = sa.play_buffer(filtered_segment, 1, 2, sample_rate)
                 play_obj.wait_done()
+
             except Exception as e:
                 messagebox.showerror("Error", f"Could not play audio:\n{e}")
         else:
             messagebox.showwarning("No Audio", "Please load an audio file first.")'''
-
+     
     def on_row_double_click(event):
         """Handle double-click on a row."""
         selected_item = detection_tree.focus()  # Get the selected row's ID
         if selected_item:
             record = detection_tree.item(selected_item)["values"]  # Get the row's values
-        show_recording(record[6],record[7],record[0],record[1],record[2],record[3])
+        show_recording(record[6],record[7],record[0],record[1],record[2],record[3],record[8])
+        '''try:
+            # Start playback in a separate thread
+            threading.Thread(target=play_audio, args=(record[6],record[7],record[0],record[1],record[2],record[3]), daemon=True).start()
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to play audio: {e}")'''
 
     # Create the new window
     table_window = tk.Toplevel()
@@ -230,3 +278,6 @@ def open_table_window():
     # Bind double-click event to the Treeview rows
     detection_tree.bind("<Double-1>", on_row_double_click)
 
+
+
+    detection_tree.mainloop()
