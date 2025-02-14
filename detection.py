@@ -1,4 +1,7 @@
+import chunk
+from email import header
 import tkinter as tk
+from turtle import title
 import pandas as pd
 import numpy as np
 import os
@@ -11,6 +14,10 @@ import numpy as np
 from scipy.io import wavfile
 from scipy.signal import butter, filtfilt
 import threading
+import sounddevice as sd
+import time
+global spectogram_player
+start_time = None
 
 def open_table_window():
     """Open a new window to populate and interact with the table."""
@@ -84,14 +91,15 @@ def open_table_window():
                 except Exception as e:
                     messagebox.showerror("Error", f"Failed to load file: {e}")
     
-    def show_recording(path,file,time_start,time_end,freq_min,freq_max,chrunk,n_mels=128, hop_length=512):
+    def show_recording(path,file,time_start,time_end,freq_min,freq_max,chrunk,n_mels=128, hop_length=512,n_fft = 2048):
+        chrunk_po = chrunk
         # Create a new window (child window)
         spectogram_player = tk.Toplevel(table_window)
         spectogram_player.title("Wave File Spectrogram and Player")
         spectogram_player.geometry("850x400")
 
         spectogram_player.columnconfigure(0, weight=4)
-       
+        output_path = path
         path = path.split('output')[0]+'accoustic_data'
         file_path = path+'/'+file.split('_duration_')[0]+'.wav'
         if not file_path:
@@ -104,73 +112,154 @@ def open_table_window():
         try:
             global y, canvas, ax, sr  # Use global variables for Tkinter updates
 
-            sr=None
-            y, sr = librosa.load(file_path, sr=sr)
-            # Compute the mel spectrogram
-            S = librosa.feature.melspectrogram(y=y, sr=sr, n_mels=128, fmax=8000)
+            import numpy as np
+            import matplotlib.pyplot as plt
+            import librosa
+            import librosa.display
 
-            # Convert to dB scale for better visualization
-            S_dB = librosa.power_to_db(S, ref=np.max)
+            
+            y, sr = librosa.load(file_path, sr=None)
 
+            # Define the frame you want to analyze
             start_time = 6*(int(chrunk)-1)
             end_time = 6*(int(chrunk))
-            
-            # Convert time to sample indices
+
             start_sample = int(start_time * sr)
             end_sample = int(end_time * sr)
+            frame = y[start_sample:end_sample]
 
-            # Extract segment of interest
-            y_segment = y[start_sample:end_sample]
+            start_event = int(float(time_start) * sr)
+            if start_event>=1:
+                start_event-=1
+            end_event = int(float(time_end) * sr)
+            end_event+=1
+            event = frame[start_event:end_event]
+            # Compute the spectrogram
+            '''S = librosa.stft(frame)
+            S_db = librosa.amplitude_to_db(np.abs(S), ref=np.max)'''
+
+
+
+            # Compute STFT
+            D = np.abs(librosa.stft(frame))
+
+            # Convert to dB scale
+            D_db = librosa.amplitude_to_db(D, ref=np.max)
+
+            # Get frequency and time axes
+            frequencies = librosa.fft_frequencies(sr=sr)
+            times = librosa.frames_to_time(np.arange(D.shape[1]), sr=sr)
+
+            # Define frequency range
+            low_freq = 0  # Lower frequency limit (Hz)
+            high_freq = 10500  # Upper frequency limit (Hz)
 
             # Create a Matplotlib Figure
-            fig, ax = plt.subplots(figsize=(6, 3))
+            fig, ax = plt.subplots(figsize=(8, 3))
             canvas = FigureCanvasTkAgg(fig, master=spectogram_player)
             canvas.get_tk_widget().grid(row=3, column=0, columnspan=2)
 
-            # Generate mel spectrogram
-            spectrogram = librosa.feature.melspectrogram(y=y_segment, sr=sr, n_mels=n_mels, hop_length=hop_length)
-            spectrogram_db = librosa.power_to_db(spectrogram, ref=np.max)  # Convert to dB scale
-
-            # Clear previous plot
+             # Clear previous plot
             ax.clear()
 
-            # Plot spectrogram
-            librosa.display.specshow(spectrogram_db, sr=sr, hop_length=512, x_axis='time', y_axis='mel', ax=ax)
-            ax.set_title(f"Spectrogram from {start_time:.2f}s to {end_time:.2f}s")
-    
-            # Update plot in Tkinter
-            canvas.draw()
+            # Get frequency and time axes
+            freq_indices = np.where((frequencies >= low_freq) & (frequencies <= high_freq))[0].astype(int)
 
-            # Plot the filtered spectrogram
-            #fig, ax = plt.figure(figsize=(10, 6))
-            '''fig = plt.figure(figsize=(8, 3))
-            ax = fig.add_subplot(111)
+            '''img = librosa.display.specshow(S_db[freq_indices, :], sr=sr, x_axis='time', y_axis='log')
+            plt.colorbar(img, ax=ax, format="%+2.0f dB")
+            plt.title('Spectrogram')
+            plt.xlabel('Time (s)')
+            plt.ylabel('Frequency (Hz)')
+            ax.set(title=f"Spectrogram from {start_time:.2f}s to {end_time:.2f}s")'''
 
-            plt.figure(figsize=(10, 4))
-            img = librosa.display.specshow(spectrogram_db, sr=sr, hop_length=hop_length, x_axis='time', y_axis='mel')
-            plt.colorbar(format='%+2.0f dB')
-            plt.title("Spectrogram")
+            # Plot spectrogram for selected frequency range
+            librosa.display.specshow(D_db[freq_indices, :], 
+                         x_axis="time", 
+                         y_axis="linear", 
+                         sr=sr, 
+                         cmap="magma", 
+                         hop_length=512)
+
+            plt.colorbar(label="Decibels (dB)")
+            plt.title(f"Spectrogram ({low_freq}-{high_freq} Hz)")
             plt.xlabel("Time (s)")
-            plt.ylabel("Frequency (Mel)")
-            fig.colorbar(img, ax=ax, format="%+2.0f dB")
+            plt.ylabel("Frequency (Hz)")
+            plt.ylim([low_freq, high_freq])
+            plt.xlim([0, 6])
 
-            # Embed the plot in Tkinter
-            canvas = FigureCanvasTkAgg(fig, master=plot_frame)
+
+
+            #plt.show()
+
+            # Draw the box
+            if int(chrunk) > 1:
+                chrunk = int(chrunk)
+                plt.plot([float(time_start)-(6*(chrunk-1)), float(time_end)-(6*(chrunk-1)), float(time_end)-(6*(chrunk-1)), float(time_start)-(6*(chrunk-1)), float(time_start)-(6*(chrunk-1))],
+                [float(freq_min), float(freq_min), float(freq_max), float(freq_max), float(freq_min)],
+                color='red', linewidth=2)
+            else:
+                plt.plot([float(time_start), float(time_end), float(time_end), float(time_start), float(time_start)],
+                [float(freq_min), float(freq_min), float(freq_max), float(freq_max), float(freq_min)],
+                color='red', linewidth=2)
+
+           # Embed Matplotlib figure in Tkinter
+            canvas = FigureCanvasTkAgg(fig, master=spectogram_player)
             canvas_widget = canvas.get_tk_widget()
-            canvas_widget.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
-            canvas.draw()
-            #canvas.get_tk_widget().pack(expand=True, fill="both")'''
+            canvas.get_tk_widget().grid(row=3, column=0, columnspan=2)
+            
+            # Initialize vertical line tracker
+            line = ax.axvline(x=start_time, color="r", linestyle="--", lw=2)
+            # Update plot in Tkinter
+           
+
+            def play_sound():
+                #Define a function to update the line's position
+                def update_line():
+                    current_time = time.time() - start_time_global  # Get the elapsed time since play
+                    if current_time < end_time:
+                        line.set_xdata([current_time])
+                        canvas.draw()
+                        spectogram_player.after(10, update_line)  # Update every 10ms (adjust as needed)
+
+                # Play the audio
+                sd.play(frame, sr)
+
+                # Start the timer for the animation
+                start_time_global = time.time()
+
+                # Begin the animation
+                spectogram_player.after(10, update_line)  # Start updating the line
+
+            def validation(decision):
+                updated_lines = []
+                output_path_file = output_path+'/'+file
+                with open(output_path_file, "r") as txt_file:
+                    lines = txt_file.readlines()
+
+                for i, line in enumerate(lines):
+                    columns = line.strip().split("\t")
+
+                    if i==0:
+                        header = columns
+                        updated_lines.append("\t".join(header)+"\n")
+                        continue
+                    elif len(columns)==11 and str(round(float(columns[3]), 2))==time_start and str(round(float(columns[4]), 2))==time_end and str(round(float(columns[5]), 2))==freq_min and str(round(float(columns[6]), 2))==freq_max and columns[9]==chrunk_po:
+                        columns[10] = decision
+                    updated_lines.append("\t".join(columns) + "\n")
+
+                with open(output_path_file, "w") as txt_file:
+                    txt_file.writelines(updated_lines)
 
             # Enable the play button
-            play_button = ttk.Button(spectogram_player, text="Play Audio")
+            play_button = ttk.Button(spectogram_player, text="Play Audio", command=play_sound)
             play_button.place(relx=0.88, rely=0.2)
 
             # Enable the play button
-            positive_button = ttk.Button(spectogram_player, text="Positive")
+            positive_button = ttk.Button(spectogram_player, text="Positive", command=validation('TP'))
             positive_button.place(relx=0.88, rely=0.5)
 
             # Enable the play button
-            negative_button = ttk.Button(spectogram_player, text="Negative")
+            negative_button = ttk.Button(spectogram_player, text="Negative", command=validation('FP'))
             negative_button.place(relx=0.88, rely=0.6)
             
         except Exception as e:

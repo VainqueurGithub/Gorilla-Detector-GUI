@@ -279,10 +279,11 @@ def detection_out_put(chunk_array,conf, iou, output_path,duration_sec):
     View = 'Spectrogram 1'
     Channel = 1
     label='Gorilla'
+    decision = 'Underfined'
     i=0
-    detector_table = pd.DataFrame(columns=['Selection', 'View', 'Channel', 'Begin Time (s)', 'End Time (s)', 'Low Freq (Hz)', 'High Freq (Hz)', 'label', 'conf', 'chrunk'])
+    detector_table = pd.DataFrame(columns=['Selection', 'View', 'Channel', 'Begin Time (s)', 'End Time (s)', 'Low Freq (Hz)', 'High Freq (Hz)', 'label', 'conf', 'chrunk', 'decision'])
     #filename_chunk_spect
-    time_elaspe = 6
+    time_elaspe = 0
     for j,c in enumerate(chunk_array):
         if c.endswith((".png", ".PNG")):
             result = predict_class(c, conf, iou)
@@ -305,12 +306,13 @@ def detection_out_put(chunk_array,conf, iou, output_path,duration_sec):
                         time_end = time_elaspe+((x_max / image_width) * audio_duration)
                         freq_start = min_freq + (1 - y_max / image_height) * (max_freq - min_freq)
                         freq_end = min_freq + (y_min / image_height) * (max_freq - min_freq)
-                        time_elaspe +=6
+                        
                     if freq_start < 0:
                            freq_start = freq_start * (-1)
-                    detector_table.loc[i] = [Selection, View, Channel,time_start,time_end,freq_start,freq_end,label,cl.conf[0].item(),j+1]
+                    detector_table.loc[i] = [Selection, View, Channel,time_start,time_end,freq_start,freq_end,label,cl.conf[0].item(),j+1,decision]
                     i+=1
                     Selection+=1
+            time_elaspe +=6
 
     filename_chunk_spect = os.path.basename(c)
     filename_chunk_spect = filename_chunk_spect.split(".wav")
@@ -542,36 +544,40 @@ def visualization_form():
     # Melt for Seaborn compatibility
     df_melted = df_pivot.melt(id_vars=['month_name', 'site'], var_name='hour', value_name='count')
 
-    # Create FacetGrid for stacking within each 'Site' facet
-    g = sns.FacetGrid(df_melted, col="site", height=5, aspect=1, col_wrap=4)
-    g.map_dataframe(sns.barplot, x="month_name", y="count", hue="hour", dodge=False, palette='dark:#4c72b0')
-    g.map_dataframe(sns.barplot, x="month_name", y="count", hue="hour", dodge=False, palette='light:#4c72b0')
+    try:
+        # Create FacetGrid for stacking within each 'Site' facet
+        g = sns.FacetGrid(df_melted, col="site", height=5, aspect=1, col_wrap=4)
+        g.map_dataframe(sns.barplot, x="month_name", y="count", hue="hour", dodge=False, palette='dark:#4c72b0')
+        g.map_dataframe(sns.barplot, x="month_name", y="count", hue="hour", dodge=False, palette='light:#4c72b0')
 
-    # Adjust labels and title
-    g.set_axis_labels("month_name", "count")
-    g.set_titles("{col_name}")
-    g.add_legend(title="hour")
+        # Adjust labels and title
+        g.set_axis_labels("month_name", "count")
+        g.set_titles("{col_name}")
+        g.add_legend(title="hour")
 
-    sns.catplot(data=detection_frame, x="label", y="hour", hue="month_name", kind="swarm", col="site", aspect=.7,)
-    g = sns.catplot(data=detection_frame,x="label", y="month_name", row="site", kind="box", orient="h", sharex=False, margin_titles=True, height=1.5, aspect=4,)
+        sns.catplot(data=detection_frame, x="label", y="hour", hue="month_name", kind="swarm", col="site", aspect=.7,)
+        g = sns.catplot(data=detection_frame,x="label", y="month_name", row="site", kind="box", orient="h", sharex=False, margin_titles=True, height=1.5, aspect=4,)
     
-    g.set(xlabel="Detections", ylabel="")
-    g.set_titles(row_template="{row_name}")
-    for ax in g.axes.flat:
-        ax.xaxis.set_major_formatter('')
+        g.set(xlabel="Detections", ylabel="")
+        g.set_titles(row_template="{row_name}")
+        for ax in g.axes.flat:
+            ax.xaxis.set_major_formatter('')
 
-    fig, axes = plt.subplots(2,2, figsize=(17,5))
-    lineplot = sns.lineplot(x="hour", y="conf",hue="month_name",data=detection_frame, ax=axes[0,0])
-    lineplot.axes.set_title('Detection confidence over time')
-    lineplot = sns.lineplot(x="hour", y="High Freq (Hz)",hue="month_name",data=detection_frame, ax=axes[0,1])
-    lineplot.axes.set_title('Frequency Distribution over time')
+        fig, axes = plt.subplots(2,2, figsize=(17,5))
+        lineplot = sns.lineplot(x="hour", y="conf",hue="month_name",data=detection_frame, ax=axes[0,0])
+        lineplot.axes.set_title('Detection confidence over time')
+        lineplot = sns.lineplot(x="hour", y="High Freq (Hz)",hue="month_name",data=detection_frame, ax=axes[0,1])
+        lineplot.axes.set_title('Frequency Distribution over time')
 
 
-    lineplot = sns.histplot(data=detection_frame, x="hour", ax=axes[1,0])
-    lineplot.axes.set_title('Hourly detection')
-    lineplot = sns.histplot(data=detection_frame, x="month_name", ax=axes[1,1])
-    lineplot.axes.set_title('Monthy Detection')
-    plt.show()
+        lineplot = sns.histplot(data=detection_frame, x="hour", ax=axes[1,0])
+        lineplot.axes.set_title('Hourly detection')
+        lineplot = sns.histplot(data=detection_frame, x="month_name", ax=axes[1,1])
+        lineplot.axes.set_title('Monthy Detection')
+        plt.show()
+
+    except Exception as e:
+        print(e)
 
 def clustering_form():
     folder_path = select_output_folder()
@@ -623,49 +629,27 @@ def clustering_form():
     # Convert to NumPy matrix
     data_final = detection_frame[['Begin Time (s)', 'End Time (s)', 'Low Freq (Hz)', 'High Freq (Hz)', 'conf','land_use_encoded', 'land_cover_encoded', 'vegetation_encoded', 'month','hour','day']]
 
-    # Apply K-Means Clustering
-    kmeans = KMeans(n_clusters=2, random_state=42)
-    data_final['cluster'] = kmeans.fit_predict(data_final)
+    try:
+        # Apply K-Means Clustering
+        kmeans = KMeans(n_clusters=2, random_state=42)
+        data_final['cluster'] = kmeans.fit_predict(data_final)
 
-    # Append cluster labels
-    '''feature_matrix_kmeans = np.column_stack((matrix, clusters_kmeans))
+        # Scatter Plot with Cluster Labels
+        plt.figure(figsize=(8, 5))
 
-    # Apply DBSCAN
-    dbscan = DBSCAN(eps=1.0, min_samples=2)  # Tune `eps` for grouping
-    clusters_dbscan = dbscan.fit_predict(matrix)
+        # Plot each data point
+        for i in range(len(data_final)):
+            plt.scatter(data_final["Begin Time (s)"][i], data_final["High Freq (Hz)"][i], c=f"C{data_final['cluster'][i]}", label=f"Cluster {data_final['cluster'][i]}" if i == 0 else "", edgecolors="k")
+            plt.text(data_final["End Time (s)"][i], data_final["High Freq (Hz)"][i], detection_frame["vegetation"][i], fontsize=10, ha='right', color="black")
 
-    # Append cluster labels
-    feature_matrix_dbscan = np.column_stack((matrix, clusters_dbscan))
-
-    # Apply Hierarchical Clustering
-    Z = linkage(matrix, method='ward')
-    clusters_hierarchical = fcluster(Z, t=2, criterion='maxclust')
-
-    # Append cluster labels
-    feature_matrix_hierarchical = np.column_stack((matrix, clusters_hierarchical))
-
-    plt.figure(figsize=(8, 6))
-    sns.scatterplot(x=matrix[:, 0], y=matrix[:, 3], hue=clusters_kmeans, palette="viridis")
-    plt.xlabel("Start Time (s)")
-    plt.ylabel("Frequency (Hz)")
-    plt.title("Clustered Gorilla Vocalizations (K-Means)")
-    plt.show()'''
-
-    # Scatter Plot with Cluster Labels
-    plt.figure(figsize=(8, 5))
-
-    # Plot each data point
-    for i in range(len(data_final)):
-         plt.scatter(data_final["Begin Time (s)"][i], data_final["High Freq (Hz)"][i], c=f"C{data_final['cluster'][i]}", label=f"Cluster {data_final['cluster'][i]}" if i == 0 else "", edgecolors="k")
-         plt.text(data_final["End Time (s)"][i], data_final["High Freq (Hz)"][i], detection_frame["vegetation"][i], fontsize=10, ha='right', color="black")
-
-    # Label Axes
-    plt.xlabel("End Time (s)")
-    plt.ylabel("High Frequency (Hz)")
-    plt.title("Vocalization Clusters with Labels")
-    plt.grid(True)
-    plt.show()
-
+        # Label Axes
+        plt.xlabel("End Time (s)")
+        plt.ylabel("High Frequency (Hz)")
+        plt.title("Vocalization Clusters with Labels")
+        plt.grid(True)
+        plt.show()
+    except Exception as e:
+        print(e)
 
 def submit_mergin_form(event,range1_start_entry,range1_end_entry,range2_start_entry,range2_end_entry,range3_start_entry,range3_end_entry):
     range1_start_entry = range1_start_entry.get()
