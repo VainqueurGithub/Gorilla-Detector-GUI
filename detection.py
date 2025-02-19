@@ -1,21 +1,16 @@
-import chunk
-from email import header
 import tkinter as tk
-from turtle import title
 import pandas as pd
 import numpy as np
 import os
-#import simpleaudio as sa
 import librosa
 from tkinter import ttk, filedialog, messagebox
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import matplotlib.pyplot as plt
-import numpy as np
 from scipy.io import wavfile
-from scipy.signal import butter, filtfilt
-import threading
 import sounddevice as sd
 import time
+import librosa.display
+
 global spectogram_player
 start_time = None
 
@@ -74,7 +69,7 @@ def open_table_window():
                     df = pd.read_csv(file_path, sep="\t")
                     df['path'] = record[8]
                     df['file'] = record[0]
-                    df = df[['Begin Time (s)', 'End Time (s)', 'Low Freq (Hz)', 'High Freq (Hz)', 'label', 'conf', 'path', 'file', 'chrunk']]
+                    df = df[['Begin Time (s)', 'End Time (s)', 'Low Freq (Hz)', 'High Freq (Hz)', 'label', 'conf', 'path', 'file', 'chrunk', 'decision']]
                     df = df.round(2)
                     # Set up columns dynamically
                     detection_tree["columns"] = list(df.columns)
@@ -91,7 +86,7 @@ def open_table_window():
                 except Exception as e:
                     messagebox.showerror("Error", f"Failed to load file: {e}")
     
-    def show_recording(path,file,time_start,time_end,freq_min,freq_max,chrunk,n_mels=128, hop_length=512,n_fft = 2048):
+    def show_recording(path,file,time_start,time_end,freq_min,freq_max,chrunk,decision, n_mels=128, hop_length=512,n_fft = 2048):
         chrunk_po = chrunk
         # Create a new window (child window)
         spectogram_player = tk.Toplevel(table_window)
@@ -112,12 +107,6 @@ def open_table_window():
         try:
             global y, canvas, ax, sr  # Use global variables for Tkinter updates
 
-            import numpy as np
-            import matplotlib.pyplot as plt
-            import librosa
-            import librosa.display
-
-            
             y, sr = librosa.load(file_path, sr=None)
 
             # Define the frame you want to analyze
@@ -135,11 +124,7 @@ def open_table_window():
             end_event+=1
             event = frame[start_event:end_event]
             # Compute the spectrogram
-            '''S = librosa.stft(frame)
-            S_db = librosa.amplitude_to_db(np.abs(S), ref=np.max)'''
-
-
-
+            
             # Compute STFT
             D = np.abs(librosa.stft(frame))
 
@@ -165,13 +150,6 @@ def open_table_window():
             # Get frequency and time axes
             freq_indices = np.where((frequencies >= low_freq) & (frequencies <= high_freq))[0].astype(int)
 
-            '''img = librosa.display.specshow(S_db[freq_indices, :], sr=sr, x_axis='time', y_axis='log')
-            plt.colorbar(img, ax=ax, format="%+2.0f dB")
-            plt.title('Spectrogram')
-            plt.xlabel('Time (s)')
-            plt.ylabel('Frequency (Hz)')
-            ax.set(title=f"Spectrogram from {start_time:.2f}s to {end_time:.2f}s")'''
-
             # Plot spectrogram for selected frequency range
             librosa.display.specshow(D_db[freq_indices, :], 
                          x_axis="time", 
@@ -190,17 +168,29 @@ def open_table_window():
 
 
             #plt.show()
-
-            # Draw the box
-            if int(chrunk) > 1:
-                chrunk = int(chrunk)
-                plt.plot([float(time_start)-(6*(chrunk-1)), float(time_end)-(6*(chrunk-1)), float(time_end)-(6*(chrunk-1)), float(time_start)-(6*(chrunk-1)), float(time_start)-(6*(chrunk-1))],
-                [float(freq_min), float(freq_min), float(freq_max), float(freq_max), float(freq_min)],
-                color='red', linewidth=2)
+            
+            if decision=='TP':
+                # Draw the box
+                if int(chrunk) > 1:
+                    chrunk = int(chrunk)
+                    plt.plot([float(time_start)-(6*(chrunk-1)), float(time_end)-(6*(chrunk-1)), float(time_end)-(6*(chrunk-1)), float(time_start)-(6*(chrunk-1)), float(time_start)-(6*(chrunk-1))],
+                    [float(freq_min), float(freq_min), float(freq_max), float(freq_max), float(freq_min)],
+                    color='green', linewidth=2)
+                else:
+                    plt.plot([float(time_start), float(time_end), float(time_end), float(time_start), float(time_start)],
+                    [float(freq_min), float(freq_min), float(freq_max), float(freq_max), float(freq_min)],
+                    color='green', linewidth=2)
             else:
-                plt.plot([float(time_start), float(time_end), float(time_end), float(time_start), float(time_start)],
-                [float(freq_min), float(freq_min), float(freq_max), float(freq_max), float(freq_min)],
-                color='red', linewidth=2)
+                # Draw the box
+                if int(chrunk) > 1:
+                    chrunk = int(chrunk)
+                    plt.plot([float(time_start)-(6*(chrunk-1)), float(time_end)-(6*(chrunk-1)), float(time_end)-(6*(chrunk-1)), float(time_start)-(6*(chrunk-1)), float(time_start)-(6*(chrunk-1))],
+                    [float(freq_min), float(freq_min), float(freq_max), float(freq_max), float(freq_min)],
+                    color='red', linewidth=2)
+                else:
+                    plt.plot([float(time_start), float(time_end), float(time_end), float(time_start), float(time_start)],
+                    [float(freq_min), float(freq_min), float(freq_max), float(freq_max), float(freq_min)],
+                    color='red', linewidth=2)
 
            # Embed Matplotlib figure in Tkinter
             canvas = FigureCanvasTkAgg(fig, master=spectogram_player)
@@ -230,102 +220,82 @@ def open_table_window():
                 # Begin the animation
                 spectogram_player.after(10, update_line)  # Start updating the line
 
-            def validation(decision):
-                updated_lines = []
+            def set_true_positive():
+
                 output_path_file = output_path+'/'+file
-                with open(output_path_file, "r") as txt_file:
+                # Read the file content
+                with open(output_path_file, 'r') as txt_file:
                     lines = txt_file.readlines()
 
-                for i, line in enumerate(lines):
-                    columns = line.strip().split("\t")
+                    # Define the column to update and the new value
+                    column_to_update = 'decision'
+                    new_value = 'TP'
+                    
 
-                    if i==0:
-                        header = columns
-                        updated_lines.append("\t".join(header)+"\n")
-                        continue
-                    elif len(columns)==11 and str(round(float(columns[3]), 2))==time_start and str(round(float(columns[4]), 2))==time_end and str(round(float(columns[5]), 2))==freq_min and str(round(float(columns[6]), 2))==freq_max and columns[9]==chrunk_po:
-                        columns[10] = decision
-                    updated_lines.append("\t".join(columns) + "\n")
+                    # Find the index of the column to update
+                    header = lines[0].strip().split('\t')
+                    column_index = header.index(column_to_update)
 
-                with open(output_path_file, "w") as txt_file:
-                    txt_file.writelines(updated_lines)
+                    # Update the specific column value
+                    for i in range(1, len(lines)):
+                        row = lines[i].strip().split('\t')
+                        if str(round(float(row[3]), 2)) == str(round(float(time_start), 2)) and str(round(float(row[4]), 2))==str(round(float(time_end), 2)) and str(round(float(row[5]), 2))==str(round(float(freq_min), 2)) and str(round(float(row[6]), 2))==str(round(float(freq_max), 2)) and str(round(float(row[9]), 2))==str(round(float(chrunk_po), 2)):
+                            row[column_index] = new_value
+                            lines[i] = '\t'.join(row) + '\n'
+
+                    # Write the updated content back to the file
+                    with open(output_path_file, 'w') as txt_file:
+                        txt_file.writelines(lines)
+
+            def set_false_positive():
+
+                output_path_file = output_path+'/'+file
+                # Read the file content
+                with open(output_path_file, 'r') as txt_file:
+                    lines = txt_file.readlines()
+
+                    # Define the column to update and the new value
+                    column_to_update = 'decision'
+                    new_value = 'FP'
+                    
+
+                    # Find the index of the column to update
+                    header = lines[0].strip().split('\t')
+                    column_index = header.index(column_to_update)
+
+                    # Update the specific column value
+                    for i in range(1, len(lines)):
+                        row = lines[i].strip().split('\t')
+                        if str(round(float(row[3]), 2)) == str(round(float(time_start), 2)) and str(round(float(row[4]), 2))==str(round(float(time_end), 2)) and str(round(float(row[5]), 2))==str(round(float(freq_min), 2)) and str(round(float(row[6]), 2))==str(round(float(freq_max), 2)) and str(round(float(row[9]), 2))==str(round(float(chrunk_po), 2)):
+                            row[column_index] = new_value
+                            lines[i] = '\t'.join(row) + '\n'
+
+                    # Write the updated content back to the file
+                    with open(output_path_file, 'w') as txt_file:
+                        txt_file.writelines(lines)
 
             # Enable the play button
             play_button = ttk.Button(spectogram_player, text="Play Audio", command=play_sound)
             play_button.place(relx=0.88, rely=0.2)
 
             # Enable the play button
-            positive_button = ttk.Button(spectogram_player, text="Positive", command=validation('TP'))
+            positive_button = ttk.Button(spectogram_player, text="Positive", command=set_true_positive)
             positive_button.place(relx=0.88, rely=0.5)
 
             # Enable the play button
-            negative_button = ttk.Button(spectogram_player, text="Negative", command=validation('FP'))
+            negative_button = ttk.Button(spectogram_player, text="Negative", command=set_false_positive)
             negative_button.place(relx=0.88, rely=0.6)
             
         except Exception as e:
             messagebox.showerror("Error", f"Could not load file:\n{e}")
-    
-    def bandpass_filter(data, lowcut, highcut, samplerate, order=5):
-        """Apply a bandpass filter to the audio data."""
-        nyquist = 0.5 * samplerate
-        low = lowcut / nyquist
-        high = highcut / nyquist
-        b, a = butter(order, [low, high], btype='band')
-        y = filtfilt(b, a, data)
-        return y
-
-    def play_audio(path,file,start_time,end_time,low_freq,high_freq):
-        
-        path = path.split('output')[0]+'accoustic_data'
-        file_path = path+'/'+file.split('_duration_')[0]+'.wav'
-        '''if file_path:
-            
-            try:
-                audio_data, sample_rate = librosa.load(file_path)
-                # Handle stereo by taking one channel (left channel)
-                start_time = float(start_time)
-                end_time = float(end_time)
-                low_freq = float(low_freq)
-                high_freq = float(high_freq)
-
-                if len(audio_data.shape) >1:
-                    audio_data = audio_data[:, 0]
-                if low_freq ==0:
-                   low_freq = 1
-                if high_freq ==0:
-                   high_freq = 1
-                # Extract the desired time interval
-                start_sample = int(start_time * sample_rate)
-                end_sample = int(end_time * sample_rate)
-                segment = audio_data[start_sample:end_sample]
-
-                # Apply the bandpass filter
-                filtered_segment = bandpass_filter(segment, low_freq, high_freq, sample_rate)
-    
-                # Normalize the data to fit in the range of int16 for playback
-                filtered_segment = np.int16(filtered_segment / np.max(np.abs(filtered_segment)) * 32767)
-    
-                # Play the audio
-                play_obj = sa.play_buffer(filtered_segment, 1, 2, sample_rate)
-                play_obj.wait_done()
-
-            except Exception as e:
-                messagebox.showerror("Error", f"Could not play audio:\n{e}")
-        else:
-            messagebox.showwarning("No Audio", "Please load an audio file first.")'''
-     
+   
     def on_row_double_click(event):
         """Handle double-click on a row."""
         selected_item = detection_tree.focus()  # Get the selected row's ID
         if selected_item:
             record = detection_tree.item(selected_item)["values"]  # Get the row's values
-        show_recording(record[6],record[7],record[0],record[1],record[2],record[3],record[8])
-        '''try:
-            # Start playback in a separate thread
-            threading.Thread(target=play_audio, args=(record[6],record[7],record[0],record[1],record[2],record[3]), daemon=True).start()
-        except Exception as e:
-            messagebox.showerror("Error", f"Failed to play audio: {e}")'''
-
+        show_recording(record[6],record[7],record[0],record[1],record[2],record[3],record[8],record[9])
+        
     # Create the new window
     table_window = tk.Toplevel()
     table_window.title("Table Viewer")

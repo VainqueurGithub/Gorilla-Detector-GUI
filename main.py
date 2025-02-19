@@ -167,11 +167,11 @@ def scale_minmax(X, min=0.0, max=1.0):
     X_scaled = X_std * (max - min) + min
     return X_scaled
 
-def spectrogram_image(y, sr, out, hop_length, n_mels, fmax=5000):
+def spectrogram_image(y,fmin,fmax, sr, out, hop_length, n_mels):
     """Generate and save a spectrogram image."""
     # Generate log-mel spectrogram
     mels = librosa.feature.melspectrogram(
-        y=y, sr=sr, n_mels=n_mels, n_fft=hop_length*2, hop_length=hop_length, fmax=fmax
+        y=y, sr=sr, n_mels=n_mels, n_fft=hop_length*2, hop_length=hop_length, fmin=fmin, fmax=fmax
     )
     mels = np.log(mels + 1e-9)  # Add small value to avoid log(0)
 
@@ -192,7 +192,8 @@ def submit_form():
     proceed_action()
     treshold = treshold_entry.get()
     iou = iou_entry.get()
-    
+    fmin = fmin_entry.get()
+    fmax = fmax_entry.get()
     # Basic validation
     if not treshold or not iou:
         messagebox.showerror("Error", "Treshold and IOU fields are required!")
@@ -202,9 +203,14 @@ def submit_form():
         if float(treshold)>0 and float(treshold)<100:
             if iou.isdigit():
                 if float(iou)>0 and float(iou)<100:
-                    conf = float(treshold)/100
-                    iou = float(iou)/100
-                    start_task(conf,iou)
+                    if float(fmin) >=0 and float(fmax)>float(fmin):
+                        conf = float(treshold)/100
+                        iou = float(iou)/100
+                        fmin = float(fmin)
+                        fmax = float(fmax)
+                        start_task(conf,iou,fmin,fmax)
+                    else:
+                        messagebox.showerror("Error", "Low freq must be a value greater or equal to 0, and High freq greater than Low freq")
                 else:
                     messagebox.showerror("Error", "IOU must be between 0 and 100!")
             else:
@@ -215,7 +221,7 @@ def submit_form():
         messagebox.showerror("Error", "Treshold must be a number!")
      
         
-def start_task(conf, iou):
+def start_task(conf, iou,fmin,fmax):
     
     # Disable the Start button
     run_button.config(state="disabled")
@@ -223,7 +229,7 @@ def start_task(conf, iou):
     popup_progress_detect()
  
     # Run the task in a separate thread to avoid blocking the main GUI
-    threading.Thread(target=task_progress_bar_detection(conf,iou)).start()
+    threading.Thread(target=task_progress_bar_detection(conf,iou,fmin,fmax)).start()
 
 
 def popup_progress_detect():
@@ -244,7 +250,7 @@ def popup_progress_detect():
 
     #threading.Thread(target=task_progress_bar_detection, args=(progress, label, popup, conf, iou), daemon=True).start()
 
-def task_progress_bar_detection(conf,iou):
+def task_progress_bar_detection(conf,iou,fmin,fmax):
   
     output_path,input_path = proceed_action()
     path_audio_chunks = input_path+'/audio_chunks/'
@@ -262,7 +268,7 @@ def task_progress_bar_detection(conf,iou):
         duration_ms = len(audio) # Get the duration in milliseconds
         duration_sec = duration_ms / 1000.0 # Convert milliseconds to seconds
 
-        chunk_spectrogram(filename,input_path,path_audio_chunks,directory_chunk,conf,iou,output_path,duration_sec)
+        chunk_spectrogram(filename,input_path,path_audio_chunks,directory_chunk,conf,iou,fmin,fmax,output_path,duration_sec)
         time.sleep(0.3 + (0.3 * (i / max_value)))
         progress["value"] = i
         label.config(text=f"Processing {i}/{len(files)}")
@@ -320,7 +326,7 @@ def detection_out_put(chunk_array,conf, iou, output_path,duration_sec):
     detector_table.to_csv(output_file, sep="\t", index=False)
 
 
-def chunk_spectrogram(filename,input_path,path_audio_chunks,directory_chunk,conf,iou,output_path,duration_sec,hop_length=hop_length, n_mels=n_mels, time_steps=time_steps):
+def chunk_spectrogram(filename,input_path,path_audio_chunks,directory_chunk,conf,iou,fmin,fmax,output_path,duration_sec,hop_length=hop_length, n_mels=n_mels, time_steps=time_steps):
     if filename.endswith((".wav", ".WAV")):
         time.sleep(0.1)  # Simulate processing time
         out_array = []
@@ -336,7 +342,7 @@ def chunk_spectrogram(filename,input_path,path_audio_chunks,directory_chunk,conf
                 length_samples = time_steps*hop_length
                 window = y[start_sample:start_sample+length_samples]
                 # Generate image and convert to PNG
-                img = spectrogram_image(window, sr=sr, out=out, hop_length=hop_length, n_mels=n_mels)
+                img = spectrogram_image(window,fmin,fmax, sr=sr, out=out, hop_length=hop_length, n_mels=n_mels)
                 continue
             else:
                 continue
@@ -877,18 +883,33 @@ checkbox2.place(relx=0.2, rely=0.4)
 # Label to display the status
 
 treshold_label = ttk.Label(root, text="Treshold (%):")
-treshold_label.place(relx=0.55, rely=0.4)
+treshold_label.place(relx=0.35, rely=0.4)
 
 treshold_entry = ttk.Entry(root, width=6)
-treshold_entry.place(relx=0.65, rely=0.4)
+treshold_entry.place(relx=0.45, rely=0.4)
 treshold_entry.insert(0, 15)
 
 iou_label = ttk.Label(root, text="IOU (%):")
-iou_label.place(relx=0.75, rely=0.4)
+iou_label.place(relx=0.52, rely=0.4)
 
 iou_entry = ttk.Entry(root, width=6)
-iou_entry.place(relx=0.82, rely=0.4)
+iou_entry.place(relx=0.58, rely=0.4)
 iou_entry.insert(0, 10)
+
+
+fmin_label = ttk.Label(root, text="Low freq (Hz):")
+fmin_label.place(relx=0.65, rely=0.4)
+
+fmin_entry = ttk.Entry(root, width=6)
+fmin_entry.place(relx=0.75, rely=0.4)
+fmin_entry.insert(0, 100)
+
+fmax_label = ttk.Label(root, text="High freq (Hz):")
+fmax_label.place(relx=0.82, rely=0.4)
+
+fmax_entry = ttk.Entry(root, width=6)
+fmax_entry.place(relx=0.93, rely=0.4)
+fmax_entry.insert(0, 5000)
 
 
 
