@@ -6,7 +6,6 @@ import librosa
 from tkinter import ttk, filedialog, messagebox
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import matplotlib.pyplot as plt
-from scipy.io import wavfile
 import sounddevice as sd
 import time
 import librosa.display
@@ -42,7 +41,7 @@ def open_table_window():
                         file_Path = folder_path
                         tree.insert("", "end", values=(file_name, file_detection, file_size, file_duration, conf_mean, conf_min, conf_max, conf_std,file_Path))
             except Exception as e:
-                print(e)
+                messagebox.showerror("Error", f"Failed to load file: {e}")
     
     def clear_table():
         """Clear all rows from the Treeview table and reset selection."""
@@ -67,8 +66,13 @@ def open_table_window():
                         detection_tree.delete(item)
 
                     df = pd.read_csv(file_path, sep="\t")
-                    df['path'] = record[8]
-                    df['file'] = record[0]
+
+                    # Check if column 'file' exists
+                    if hasattr(df, 'file'):
+                        df['path'] = record[8]
+                    else:
+                        df['path'] = record[8]
+                        df['file'] = record[0]
                     df = df[['Begin Time (s)', 'End Time (s)', 'Low Freq (Hz)', 'High Freq (Hz)', 'label', 'conf', 'path', 'file', 'chrunk', 'decision']]
                     df = df.round(2)
                     # Set up columns dynamically
@@ -274,18 +278,18 @@ def open_table_window():
                     with open(output_path_file, 'w') as txt_file:
                         txt_file.writelines(lines)
 
-            # Enable the play button
+            # Play button
             play_button = ttk.Button(spectogram_player, text="Play Audio", command=play_sound)
             play_button.place(relx=0.88, rely=0.2)
 
-            # Enable the play button
+            # Set TP button
             positive_button = ttk.Button(spectogram_player, text="Positive", command=set_true_positive)
             positive_button.place(relx=0.88, rely=0.5)
 
-            # Enable the play button
+            # Set FP button
             negative_button = ttk.Button(spectogram_player, text="Negative", command=set_false_positive)
             negative_button.place(relx=0.88, rely=0.6)
-            
+  
         except Exception as e:
             messagebox.showerror("Error", f"Could not load file:\n{e}")
    

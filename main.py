@@ -39,7 +39,6 @@ from shapely.geometry import Point
 from pyproj import CRS, Transformer
 import seaborn as sns
 from sklearn.cluster import KMeans, DBSCAN
-from scipy.cluster.hierarchy import linkage, dendrogram, fcluster
 from sklearn.preprocessing import OneHotEncoder, LabelEncoder
 sns.set_theme(style="darkgrid")
 os.environ["KMP_DUPLICATE_LIB_OK"]="TRUE"
@@ -122,7 +121,7 @@ def clean_space_control():
     else:
         messagebox.showerror("Error", "You must select an folder before proceeding!")
 
-def predict_class(filename,conf, iou, show=False, imgsz=640,save=True,name='yolov8m'):
+def predict_class(filename,conf, iou, show=False, imgsz=640,save=False,name='yolov8m'):
     
     model = YOLO('model/runs/detect/yolov8l_custom/weights/best.pt')
     
@@ -251,9 +250,17 @@ def popup_progress_detect():
     #threading.Thread(target=task_progress_bar_detection, args=(progress, label, popup, conf, iou), daemon=True).start()
 
 def task_progress_bar_detection(conf,iou,fmin,fmax):
-  
+    
     output_path,input_path = proceed_action()
+
+    if not os.path.exists(input_path+'/audio_chunks/'):
+        os.makedirs(input_path+'/audio_chunks/')  # Create folder
+
     path_audio_chunks = input_path+'/audio_chunks/'
+
+    if not os.path.exists(path_audio_chunks+'/chunk_spect/'):
+        os.makedirs(path_audio_chunks+'/chunk_spect/')  # Create folder
+    
     path_audio_chunk_spect = path_audio_chunks+'/chunk_spect/'
     directory_chunk = os.fsencode(path_audio_chunks)
     files = [os.path.join(input_path, f) for f in os.listdir(input_path) if f.endswith(".WAV") or f.endswith(".wav")]
@@ -688,9 +695,9 @@ def submit_mergin_form(event,range1_start_entry,range1_end_entry,range2_start_en
         messagebox.showerror("Error", "Something is wrong within range confidence 1")
 
 def margin_selection(range1_start_entry,range1_end_entry,range2_start_entry,range2_end_entry,range3_start_entry,range3_end_entry):
-    detection_range1 = pd.DataFrame(columns=['Selection', 'View', 'Channel', 'Begin Time (s)', 'End Time (s)', 'Low Freq (Hz)', 'High Freq (Hz)', 'label', 'conf','hour_voc', 'date_voc','lat','long'])
-    detection_range2 = pd.DataFrame(columns=['Selection', 'View', 'Channel', 'Begin Time (s)', 'End Time (s)', 'Low Freq (Hz)', 'High Freq (Hz)', 'label', 'conf','hour_voc', 'date_voc','lat','long'])
-    detection_range3 = pd.DataFrame(columns=['Selection', 'View', 'Channel', 'Begin Time (s)', 'End Time (s)', 'Low Freq (Hz)', 'High Freq (Hz)', 'label', 'conf','hour_voc', 'date_voc','lat','long'])
+    detection_range1 = pd.DataFrame(columns=['Selection', 'View', 'Channel', 'Begin Time (s)', 'End Time (s)', 'Low Freq (Hz)', 'High Freq (Hz)', 'label', 'conf', 'chrunk', 'decision', 'file'])
+    detection_range2 = pd.DataFrame(columns=['Selection', 'View', 'Channel', 'Begin Time (s)', 'End Time (s)', 'Low Freq (Hz)', 'High Freq (Hz)', 'label', 'conf', 'chrunk', 'decision', 'file'])
+    detection_range3 = pd.DataFrame(columns=['Selection', 'View', 'Channel', 'Begin Time (s)', 'End Time (s)', 'Low Freq (Hz)', 'High Freq (Hz)', 'label', 'conf', 'chrunk', 'decision', 'file'])
     folder_path = select_output_folder()
 
     range1_start = float(range1_start_entry)/100
@@ -702,17 +709,21 @@ def margin_selection(range1_start_entry,range1_end_entry,range2_start_entry,rang
 
     try:
         for file_name in os.listdir(folder_path):
-            data = pd.read_csv(folder_path+'/'+file_name, sep='\t')
-            data_range1 = data[(data['conf']>range1_start) & (data['conf']<range1_end)]
-            data_range2 = data[(data['conf']>range2_start) & (data['conf']<range2_end)]
-            data_range3 = data[(data['conf']>range3_start) & (data['conf']<range3_end)]
-            detection_range1 = pd.concat([detection_range1, data_range1], axis=0, ignore_index=True) # concatenating along rows
-            detection_range2 = pd.concat([detection_range2, data_range2], axis=0, ignore_index=True) # concatenating along rows
-            detection_range3 = pd.concat([detection_range3, data_range3], axis=0, ignore_index=True) # concatenating along rows
-
-        detection_range1.to_csv(folder_path+'/range1.txt', sep="\t", index=False)
-        detection_range2.to_csv(folder_path+'/range2.txt', sep="\t", index=False)
-        detection_range3.to_csv(folder_path+'/range3.txt', sep="\t", index=False)
+            if file_name.endswith(".txt"):
+                data = pd.read_csv(folder_path+'/'+file_name, sep='\t')
+                data['file'] = file_name
+                data_range1 = data[(data['conf']>range1_start) & (data['conf']<range1_end)]
+                data_range2 = data[(data['conf']>range2_start) & (data['conf']<range2_end)]
+                data_range3 = data[(data['conf']>range3_start) & (data['conf']<range3_end)]
+                detection_range1 = pd.concat([detection_range1, data_range1], axis=0, ignore_index=True) # concatenating along rows
+                detection_range2 = pd.concat([detection_range2, data_range2], axis=0, ignore_index=True) # concatenating along rows
+                detection_range3 = pd.concat([detection_range3, data_range3], axis=0, ignore_index=True) # concatenating along rows
+        # Ensure the folder exists
+        if not os.path.exists(folder_path+'/marged'):
+            os.makedirs(folder_path+'/marged')  # Create folder
+        detection_range1.to_csv(folder_path+'/marged/range1_duration_unknown.txt', sep="\t", index=False)
+        detection_range2.to_csv(folder_path+'/marged/range2_duration_unknown.txt', sep="\t", index=False)
+        detection_range3.to_csv(folder_path+'/marged/range3_duration_unknown.txt', sep="\t", index=False)
     except Exception as e:
         print(e)
         
