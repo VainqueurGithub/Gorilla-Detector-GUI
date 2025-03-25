@@ -121,13 +121,13 @@ def clean_space_control():
     else:
         messagebox.showerror("Error", "You must select an folder before proceeding!")
 
-def predict_class(filename,conf, iou, show=False, imgsz=640,save=False,name='yolov8m'):
+def predict_class(filename,conf, iou, show=False, imgsz=640,save=False):
     
-    model = YOLO('model/runs/detect/yolov8l_custom/weights/best.pt')
+    model = YOLO('model/runs/detect/yolov8l_gorilla_insectbuzz_20epoch/weights/best.pt')
     
     #Predicting
     result=model.predict(
-        source=filename,show=show,imgsz=imgsz,save=save,name=name,conf=conf,iou=iou)
+        source=filename,show=show,imgsz=imgsz,save=save,conf=conf,iou=iou, classes=[0])
     return result
 
 def audio_chunks(path_audio_chunks,input_path,filename):
@@ -297,6 +297,8 @@ def detection_out_put(chunk_array,conf, iou, output_path,duration_sec):
     detector_table = pd.DataFrame(columns=['Selection', 'View', 'Channel', 'Begin Time (s)', 'End Time (s)', 'Low Freq (Hz)', 'High Freq (Hz)', 'label', 'conf', 'chrunk', 'decision'])
     #filename_chunk_spect
     time_elaspe = 0
+    min_freq = float(fmin_entry.get())
+    max_freq = float(fmax_entry.get())
     for j,c in enumerate(chunk_array):
         if c.endswith((".png", ".PNG")):
             result = predict_class(c, conf, iou)
