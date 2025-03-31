@@ -123,7 +123,7 @@ def clean_space_control():
 
 def predict_class(filename,conf, iou, show=False, imgsz=640,save=False):
     
-    model = YOLO('model/runs/detect/yolov8l_gorilla_insectbuzz_20epoch/weights/best.pt')
+    model = YOLO('model/runs/detect/yolov8l_gorilla_insectbuzz_10epoch_new/weights/best.pt')
     
     #Predicting
     result=model.predict(
@@ -745,11 +745,11 @@ def populate_table():
         func = getattr(module, function_name)  # Get the function reference
         func()  # Call the function
     except AttributeError:
-        print(f"Error: Function '{function_name}' not found in '{script_name}.py'.")
+        messagebox.showerror("Error: Function", f"{function_name} not found in {script_name}.py.")
     except ModuleNotFoundError:
-        print(f"Error: Script '{script_name}.py' not found.")
+        messagebox.showerror("Error: Script", f"{script_name}.py not found.")
     except Exception as e:
-        print(f"An error occurred: {e}")
+        messagebox.showerror("An error occurred", f"{e}")
    
 def clean_space():
     """Display a warning message when the button is clicked."""
